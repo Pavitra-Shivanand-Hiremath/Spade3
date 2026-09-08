@@ -39,8 +39,6 @@ Spade3/
     └── package.json
 ```
 
-## Running it locally (Windows, from `C:\Users\pavit\projects\Spade3`)
-
 ### 1. Backend
 
 ```
