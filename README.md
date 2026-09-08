@@ -5,6 +5,7 @@ played across 4 browser tabs in the same window.
 
 - **Backend:** Python + FastAPI, in-memory game state, REST for lobby actions, WebSockets for live play.
 - **Frontend:** React + TypeScript + Vite.
+- **Live URL:** `https://spade3.pavihiremath03.workers.dev`
 
 ## Game rules (v1)
 
@@ -49,7 +50,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API will be running at `http://localhost:8000`. You can check `http://localhost:8000/api/health`.
+The API will be running at `http://localhost:8000`. You can check `http://localhost:8000/api/health`.(In Dev)
 
 ### 2. Frontend
 
@@ -61,25 +62,46 @@ npm install
 npm run dev
 ```
 
-This starts Vite at `http://localhost:5173`.
+This starts Vite at `http://localhost:5173`.(In Dev)
 
-### 3. Play
+### 3. Deployment
 
-1. Open `http://localhost:5173` in Tab 1 → **Create game** → note the 6-character game code.
-2. Open 3 more tabs to the same URL → **Join game** with that code in each.
-3. Once all 4 are in, Tab 1's "Start game" button appears (any tab can click it) and the hand begins.
+Spade3 is deployed as two separate services:
 
-Each tab keeps its own player identity in the browser's `sessionStorage`
-(not `localStorage`), which is what makes 4 tabs in one window work
-correctly without them fighting over the same session.
+- **Frontend** (React + Vite) → [Cloudflare Pages/Workers](https://pages.cloudflare.com)
+- **Backend** (FastAPI + WebSockets) → [Render](https://render.com)
 
-## Notes / next steps
+They're split because the backend keeps game state in memory and needs a
+persistent Python process (which Cloudflare Workers doesn't support), while
+the frontend is a static build that Cloudflare serves at the edge.
 
-- Game state lives entirely in the backend's memory — restarting the
-  backend clears all games. There's no database in this version.
-- All rules (legal cards, bid validation, trick winners, scoring) are
-  enforced server-side; the frontend only renders state and sends intents.
-- Natural follow-ups if you want to keep building: reconnect handling,
-  multiple hands per game with running scores, an AI/bot player for
-  fewer than 4 humans, and deploying the backend somewhere reachable
-  by phones/other devices instead of just localhost.
+### Backend (Render)
+
+1. Create a new **Web Service** on Render, connected to this repo.
+2. Settings:
+   - **Root directory:** `backend`
+   - **Build command:** `pip install -r requirements.txt`
+   - **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+3. Add environment variable `PYTHON_VERSION` = `3.11.9` (pins a stable Python
+   version — Render's default can be too new for `pydantic-core`'s prebuilt
+   wheels).
+4. Once live, note the public URL Render gives you, e.g.
+   `https://spade3.onrender.com`.
+
+Live backend URL: `https://spade3.onrender.com`
+
+### Frontend (Cloudflare)
+
+1. In the Cloudflare dashboard: **Workers & Pages → Create application → Pages
+   → Connect to Git**, and select this repo.
+2. Settings:
+   - **Path:** `frontend`
+   - **Build command:** `npm run build`
+   - **Deploy command:** `npx wrangler deploy`
+3. The `frontend/wrangler.jsonc` file in this repo tells Wrangler to serve
+   `dist/` as static assets, with SPA fallback routing.
+4. Under **Settings → Variables and secrets**, add a build variable:
+   - `VITE_API_URL` = `https://spade3.onrender.com` (your Render backend URL)
+5. Trigger a deploy (push a commit, or use "Retry deployment").
+
+Live frontend URL: `https://spade3.pavihiremath03.workers.dev`
