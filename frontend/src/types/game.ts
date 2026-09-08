@@ -36,6 +36,8 @@ export interface TrickCard {
 export interface GameState {
   game_id: string;
   phase: GamePhase;
+  num_players: number;
+  teammates_needed: number;
   max_bid: number;
   players: PlayerView[];
   my_player_id: string | null;
@@ -44,9 +46,9 @@ export interface GameState {
   current_bidder_id: string | null;
   bidder_id: string | null;
   bidder_bid: number | null;
-  teammate_revealed: boolean;
-  teammate_id: string | null;
-  teammate_card: CardT | null;
+  teammates_revealed_count: number;
+  all_teammates_revealed: boolean;
+  revealed_teammate_ids: string[];
   am_i_bidder: boolean;
   current_trick: TrickCard[];
   completed_tricks_count: number;
