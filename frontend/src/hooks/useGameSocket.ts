@@ -7,7 +7,7 @@ interface UseGameSocketResult {
   connected: boolean;
   error: string | null;
   startGame: () => void;
-  placeBid: (amount: number, isNil?: boolean, isBlindNil?: boolean) => void;
+  placeBid: (amount: number, isNil?: boolean) => void;
   selectTeammateCards: (cards: CardT[]) => void;
   playCard: (card: CardT) => void;
 }
@@ -51,8 +51,8 @@ export function useGameSocket(gameId: string | null, playerId: string | null): U
   const startGame = useCallback(() => send({ type: "start_game" }), [send]);
 
   const placeBid = useCallback(
-    (amount: number, isNil = false, isBlindNil = false) =>
-      send({ type: "place_bid", bid: amount, is_nil: isNil, is_blind_nil: isBlindNil }),
+    (amount: number, isNil = false) =>
+      send({ type: "place_bid", bid: amount, is_nil: isNil}),
     [send]
   );
 

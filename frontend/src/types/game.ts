@@ -13,7 +13,6 @@ export interface CardT {
 export interface BidInfo {
   amount: number;
   is_nil: boolean;
-  is_blind_nil: boolean;
 }
 
 export interface PlayerView {
@@ -56,4 +55,5 @@ export interface GameState {
   spades_broken: boolean;
   winner_team: "bidder" | "opponent" | null;
   team_points: Record<string, number>;
+  teammate_cards: CardT[];
 }

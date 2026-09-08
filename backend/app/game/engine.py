@@ -36,7 +36,6 @@ class EngineError(Exception):
 class Bid:
     amount: int
     is_nil: bool = False
-    is_blind_nil: bool = False
 
 
 @dataclass
@@ -147,7 +146,7 @@ class Game:
             return None
         return self.bid_order[self.current_bid_index]
 
-    def place_bid(self, player_id: str, amount: int, is_nil: bool = False, is_blind_nil: bool = False) -> None:
+    def place_bid(self, player_id: str, amount: int, is_nil: bool = False) -> None:
         if self.phase != GamePhase.BIDDING:
             raise EngineError("Not currently in the bidding phase.")
         if self.current_bidder_id() != player_id:
@@ -155,13 +154,13 @@ class Game:
         if player_id in self.bids:
             raise EngineError("You have already bid.")
 
-        if is_nil or is_blind_nil:
+        if is_nil:
             amount = 0
         else:
             if amount < 0 or amount > self.max_bid:
                 raise EngineError(f"Bid must be between 0 and {self.max_bid}.")
 
-        self.bids[player_id] = Bid(amount=amount, is_nil=is_nil, is_blind_nil=is_blind_nil)
+        self.bids[player_id] = Bid(amount=amount, is_nil=is_nil)
         self.current_bid_index += 1
 
         if self.current_bid_index >= len(self.bid_order):
@@ -345,7 +344,7 @@ class Game:
             }
             if p.id in self.bids:
                 bid = self.bids[p.id]
-                entry["bid"] = {"amount": bid.amount, "is_nil": bid.is_nil, "is_blind_nil": bid.is_blind_nil}
+                entry["bid"] = {"amount": bid.amount, "is_nil": bid.is_nil}
             if bidder_team_ids is not None:
                 entry["team"] = "bidder" if p.id in bidder_team_ids else "opponent"
             elif p.id in self.revealed_teammate_ids or p.id == self.bidder_id:
@@ -389,5 +388,6 @@ class Game:
             "spades_broken": self.spades_broken,
             "winner_team": self.winner_team,
             "team_points": self.team_points,
+            "teammate_cards": [c.to_dict() for c in self.teammate_cards],
         }
         return state

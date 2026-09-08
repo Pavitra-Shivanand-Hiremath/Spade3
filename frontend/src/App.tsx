@@ -159,7 +159,7 @@ function Lobby(props: {
       <div className="brand">
         <span className="suit">&#9824;</span>
         <h1>Spade3</h1>
-        <p>A local 4-10 player trick-taking game with a secret teammate twist.</p>
+        <p>A local 4-10 player trick-taking game with secret teammates.</p>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -167,7 +167,7 @@ function Lobby(props: {
       <div className="panel">
         <h2>Start a new table</h2>
         <div className="field">
-          <label htmlFor="name1">Your name (optional)</label>
+          <label htmlFor="name1">Your name</label>
           <input id="name1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
         </div>
         <div className="field">
@@ -203,12 +203,12 @@ function Lobby(props: {
         </button>
       </div>
 
-      <div className="divider-text">then open {numPlayers - 1} more tabs to join</div>
+      <div className="divider-text">need {numPlayers - 1} more players to join</div>
 
       <div className="panel">
         <h2>Join an existing table</h2>
         <div className="field">
-          <label htmlFor="name2">Your name (optional)</label>
+          <label htmlFor="name2">Your name</label>
           <input id="name2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
         </div>
         <div className="field">
@@ -238,7 +238,7 @@ function GameScreen(props: {
   connected: boolean;
   error: string | null;
   startGame: () => void;
-  placeBid: (amount: number, isNil?: boolean, isBlindNil?: boolean) => void;
+  placeBid: (amount: number, isNil?: boolean) => void;
   selectTeammateCards: (cards: CardT[]) => void;
   playCard: (card: CardT) => void;
   onLeave: () => void;
@@ -275,6 +275,20 @@ function GameScreen(props: {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {state.teammate_cards.length > 0 && (
+        <div className="teammate-cards-banner">
+          <span className="teammate-cards-label">
+            {byId(state, state.bidder_id)}'s secret teammate card{state.teammate_cards.length === 1 ? "" : "s"}
+            &nbsp;&mdash; watch for {state.teammate_cards.length === 1 ? "it" : "these"} being played:
+          </span>
+          <div className="teammate-cards-row">
+            {state.teammate_cards.map((c) => (
+              <PlayingCard key={`${c.suit}${c.rank}`} card={c} mini />
+            ))}
+          </div>
+        </div>
+      )}
 
       <Felt state={state} playCard={playCard} />
 
@@ -373,7 +387,7 @@ function Felt({
         <div className="seat-meta">
           <span>{p.cards_remaining} cards</span>
           <span>{p.tricks_won} tricks</span>
-          {p.has_bid && p.bid && <span>Bid {p.bid.is_nil || p.bid.is_blind_nil ? "Nil" : p.bid.amount}</span>}
+          {p.has_bid && p.bid && <span>Bid {p.bid.is_nil ? "Nil" : p.bid.amount}</span>}
         </div>
         {p.team && <div className={`team-tag ${p.team}`}>{p.team === "bidder" ? "Bidder team" : "Opponents"}</div>}
       </div>
@@ -439,7 +453,7 @@ function BiddingPanel({
   placeBid,
 }: {
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
-  placeBid: (amount: number, isNil?: boolean, isBlindNil?: boolean) => void;
+  placeBid: (amount: number, isNil?: boolean) => void;
 }) {
   const [amount, setAmount] = useState(Math.round(state.max_bid / 2));
   const myTurn = state.current_bidder_id === state.my_player_id;
@@ -465,11 +479,8 @@ function BiddingPanel({
             <button className="btn btn-primary" style={{ width: "auto" }} onClick={() => placeBid(amount)}>
               Bid {amount}
             </button>
-            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => placeBid(0, true, false)}>
+            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => placeBid(0, true)}>
               Nil
-            </button>
-            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => placeBid(0, false, true)}>
-              Blind Nil
             </button>
           </div>
         </>

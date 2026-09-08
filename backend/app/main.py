@@ -114,8 +114,7 @@ async def handle_message(game, player_id: str, message: dict) -> None:
         elif msg_type == "place_bid":
             amount = int(message.get("bid", 0))
             is_nil = bool(message.get("is_nil", False))
-            is_blind_nil = bool(message.get("is_blind_nil", False))
-            game.place_bid(player_id, amount, is_nil=is_nil, is_blind_nil=is_blind_nil)
+            game.place_bid(player_id, amount, is_nil=is_nil)
 
         elif msg_type == "select_teammate_cards":
             cards = [Card.from_dict(c) for c in message["cards"]]
