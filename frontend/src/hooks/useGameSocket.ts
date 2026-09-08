@@ -8,7 +8,7 @@ interface UseGameSocketResult {
   error: string | null;
   startGame: () => void;
   placeBid: (amount: number, isNil?: boolean, isBlindNil?: boolean) => void;
-  selectTeammateCard: (card: CardT) => void;
+  selectTeammateCards: (cards: CardT[]) => void;
   playCard: (card: CardT) => void;
 }
 
@@ -56,12 +56,12 @@ export function useGameSocket(gameId: string | null, playerId: string | null): U
     [send]
   );
 
-  const selectTeammateCard = useCallback(
-    (card: CardT) => send({ type: "select_teammate_card", card }),
+  const selectTeammateCards = useCallback(
+    (cards: CardT[]) => send({ type: "select_teammate_cards", cards }),
     [send]
   );
 
   const playCard = useCallback((card: CardT) => send({ type: "play_card", card }), [send]);
 
-  return { state, connected, error, startGame, placeBid, selectTeammateCard, playCard };
+  return { state, connected, error, startGame, placeBid, selectTeammateCards, playCard };
 }

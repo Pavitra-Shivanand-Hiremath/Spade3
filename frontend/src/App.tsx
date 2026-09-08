@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { createGame, joinGame } from "./services/api";
 import { useGameSocket } from "./hooks/useGameSocket";
 import PlayingCard from "./components/PlayingCard";
 import { CardT } from "./types/game";
 
 // sessionStorage (NOT localStorage) is deliberate: it is scoped per browser
-// tab, so four tabs in the same window each keep their own identity.
+// tab, so tabs in the same window each keep their own identity.
 const STORAGE_KEY = "spade3_session";
 
 interface StoredSession {
@@ -36,10 +36,11 @@ export default function App() {
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [maxBid, setMaxBid] = useState(150);
+  const [numPlayers, setNumPlayers] = useState(4);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const { state, connected, error, startGame, placeBid, selectTeammateCard, playCard } = useGameSocket(
+  const { state, connected, error, startGame, placeBid, selectTeammateCards, playCard } = useGameSocket(
     session?.gameId ?? null,
     session?.playerId ?? null
   );
@@ -48,7 +49,7 @@ export default function App() {
     setBusy(true);
     setFormError(null);
     try {
-      const res = await createGame(maxBid, name || undefined);
+      const res = await createGame(maxBid, numPlayers, name || undefined);
       const s = { gameId: res.game_id, playerId: res.player_id, playerNumber: res.player_number };
       saveSession(s);
       setSession(s);
@@ -93,6 +94,8 @@ export default function App() {
           setJoinCode={setJoinCode}
           maxBid={maxBid}
           setMaxBid={setMaxBid}
+          numPlayers={numPlayers}
+          setNumPlayers={setNumPlayers}
           onCreate={handleCreate}
           onJoin={handleJoin}
           busy={busy}
@@ -111,7 +114,7 @@ export default function App() {
         error={error}
         startGame={startGame}
         placeBid={placeBid}
-        selectTeammateCard={selectTeammateCard}
+        selectTeammateCards={selectTeammateCards}
         playCard={playCard}
         onLeave={handleLeave}
       />
@@ -129,19 +132,34 @@ function Lobby(props: {
   setJoinCode: (v: string) => void;
   maxBid: number;
   setMaxBid: (v: number) => void;
+  numPlayers: number;
+  setNumPlayers: (v: number) => void;
   onCreate: () => void;
   onJoin: () => void;
   busy: boolean;
   error: string | null;
 }) {
-  const { name, setName, joinCode, setJoinCode, maxBid, setMaxBid, onCreate, onJoin, busy, error } = props;
+  const {
+    name,
+    setName,
+    joinCode,
+    setJoinCode,
+    maxBid,
+    setMaxBid,
+    numPlayers,
+    setNumPlayers,
+    onCreate,
+    onJoin,
+    busy,
+    error,
+  } = props;
 
   return (
     <div className="lobby">
       <div className="brand">
         <span className="suit">&#9824;</span>
         <h1>Spade3</h1>
-        <p>A local 4-player trick-taking game with a secret teammate twist.</p>
+        <p>A local 4-10 player trick-taking game with a secret teammate twist.</p>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -151,6 +169,23 @@ function Lobby(props: {
         <div className="field">
           <label htmlFor="name1">Your name (optional)</label>
           <input id="name1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
+        </div>
+        <div className="field">
+          <label htmlFor="numplayers">Number of players (4-10)</label>
+          <input
+            id="numplayers"
+            type="number"
+            min={4}
+            max={10}
+            value={numPlayers}
+            onChange={(e) => {
+              const v = Math.max(4, Math.min(10, Number(e.target.value) || 4));
+              setNumPlayers(v);
+            }}
+          />
+          <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+            Secret teammates: {Math.floor(numPlayers / 2) - 1} (plus the bidder)
+          </p>
         </div>
         <div className="field">
           <label htmlFor="maxbid">Maximum bid</label>
@@ -168,7 +203,7 @@ function Lobby(props: {
         </button>
       </div>
 
-      <div className="divider-text">then open 3 more tabs to join</div>
+      <div className="divider-text">then open {numPlayers - 1} more tabs to join</div>
 
       <div className="panel">
         <h2>Join an existing table</h2>
@@ -204,11 +239,11 @@ function GameScreen(props: {
   error: string | null;
   startGame: () => void;
   placeBid: (amount: number, isNil?: boolean, isBlindNil?: boolean) => void;
-  selectTeammateCard: (card: CardT) => void;
+  selectTeammateCards: (cards: CardT[]) => void;
   playCard: (card: CardT) => void;
   onLeave: () => void;
 }) {
-  const { gameId, state, connected, error, startGame, placeBid, selectTeammateCard, playCard, onLeave } = props;
+  const { gameId, state, connected, error, startGame, placeBid, selectTeammateCards, playCard, onLeave } = props;
 
   if (!state) {
     return (
@@ -245,7 +280,7 @@ function GameScreen(props: {
 
       {state.phase === "bidding" && <BiddingPanel state={state} placeBid={placeBid} />}
       {state.phase === "team_selection" && (
-        <TeamSelectionPanel state={state} selectTeammateCard={selectTeammateCard} />
+        <TeamSelectionPanel state={state} selectTeammateCards={selectTeammateCards} />
       )}
       {state.phase === "game_over" && <ResultPanel state={state} me={me} onLeave={onLeave} />}
     </div>
@@ -265,12 +300,12 @@ function WaitingRoom({
   onLeave: () => void;
   error: string | null;
 }) {
-  const seats = [0, 1, 2, 3].map((i) => state.players.find((p) => p.position === i));
-  const full = state.players.length === 4;
+  const seats = Array.from({ length: state.num_players }, (_, i) => state.players.find((p) => p.position === i));
+  const full = state.players.length === state.num_players;
 
   return (
     <div className="waiting-room">
-      <p className="muted">Share this code with the other 3 tabs</p>
+      <p className="muted">Share this code with the other {state.num_players - 1} tab(s)</p>
       <div className="game-code">{gameId}</div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -289,7 +324,7 @@ function WaitingRoom({
           Start game
         </button>
       ) : (
-        <p className="muted">Waiting for {4 - state.players.length} more player(s)...</p>
+        <p className="muted">Waiting for {state.num_players - state.players.length} more player(s)...</p>
       )}
 
       <div style={{ marginTop: 18 }}>
@@ -305,7 +340,7 @@ function seatPlayers(state: NonNullable<ReturnType<typeof useGameSocket>["state"
   const byPos = [...state.players].sort((a, b) => a.position - b.position);
   const myIndex = byPos.findIndex((p) => p.id === state.my_player_id);
   if (myIndex === -1) return byPos;
-  // Rotate so "me" always renders at the bottom seat.
+  // Rotate so "me" is always first; everyone else follows in turn order.
   return [...byPos.slice(myIndex), ...byPos.slice(0, myIndex)];
 }
 
@@ -316,23 +351,21 @@ function Felt({
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
   playCard: (card: CardT) => void;
 }) {
-  const ordered = seatPlayers(state); // [me, left, across, right]
-  const top = ordered[2];
-  const left = ordered[1];
-  const right = ordered[3];
+  const ordered = seatPlayers(state); // [me, next, next, ...] around the table
   const me = ordered[0];
+  const opponents = ordered.slice(1);
 
   const legalKeys = new Set(state.legal_cards.map((c) => `${c.suit}${c.rank}`));
   const myTurn = state.current_turn_id === state.my_player_id;
 
   const trickByPlayer = new Map(state.current_trick.map((tc) => [tc.player_id, tc.card]));
 
-  function seatLabel(p: typeof me) {
+  function seatLabel(p: (typeof ordered)[number]) {
     if (!p) return null;
     const isTurn = state.current_turn_id === p.id;
     const isMe = p.id === state.my_player_id;
     return (
-      <div className={`seat-card ${isTurn ? "active-turn" : ""} ${isMe ? "me" : ""}`}>
+      <div className={`seat-card ${isTurn ? "active-turn" : ""} ${isMe ? "me" : ""}`} key={p.id}>
         <div className="seat-name">
           {p.name}
           {p.id === state.bidder_id && <span title="Bidder">&#9819;</span>}
@@ -349,25 +382,17 @@ function Felt({
 
   return (
     <div className="felt">
-      <div className="seat-row">{top && seatLabel(top)}</div>
+      {/* Opponent panels wrap across as many rows as needed for any table size */}
+      <div className="seat-row" style={{ flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
+        {opponents.map((p) => seatLabel(p))}
+      </div>
 
-      <div className="middle-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div className="side-seat">{left && seatLabel(left)}</div>
-
-        <div className="trick-area">
-          <div className="seat-row" style={{ gap: 40 }}>
-            {[left, top, right].map((p, i) =>
-              p ? (
-                <TrickSlot key={p.id} card={trickByPlayer.get(p.id)} />
-              ) : (
-                <div className="trick-slot" key={i} />
-              )
-            )}
-            <TrickSlot card={trickByPlayer.get(me?.id ?? "")} />
-          </div>
+      <div className="trick-area">
+        <div className="seat-row" style={{ gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
+          {ordered.map((p) => (
+            <TrickSlot key={p.id} card={trickByPlayer.get(p.id)} />
+          ))}
         </div>
-
-        <div className="side-seat">{right && seatLabel(right)}</div>
       </div>
 
       <div>
@@ -375,9 +400,9 @@ function Felt({
           {state.phase === "playing" &&
             (myTurn ? "Your turn \u2014 play a card" : `Waiting for ${byId(state, state.current_turn_id)}...`)}
         </div>
-              {me && (
+        {me && (
           <>
-            <div className="seat-row" style={{ marginTop: 8, marginBottom: 8 }}>
+            <div className="seat-row" style={{ marginTop: 8, marginBottom: 8, justifyContent: "center" }}>
               {seatLabel(me)}
             </div>
             <div className="hand-row">
@@ -453,36 +478,89 @@ function BiddingPanel({
   );
 }
 
+function cardKey(c: CardT) {
+  return `${c.suit}${c.rank}`;
+}
+
 function TeamSelectionPanel({
   state,
-  selectTeammateCard,
+  selectTeammateCards,
 }: {
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
-  selectTeammateCard: (card: CardT) => void;
+  selectTeammateCards: (cards: CardT[]) => void;
 }) {
   const amBidder = state.am_i_bidder;
+  const needed = state.teammates_needed;
   const SUITS: CardT["suit"][] = ["S", "H", "C", "D"];
   const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
   const fullDeck: CardT[] = SUITS.flatMap((s) => RANKS.map((r) => ({ suit: s, rank: r })));
 
+  const [selected, setSelected] = useState<CardT[]>([]);
+
   if (!amBidder) {
     return (
       <div className="action-panel">
-        <h3>{byId(state, state.bidder_id)} won the bidding at {state.bidder_bid} and is secretly choosing a teammate...</h3>
-        <p className="muted">The teammate will be revealed the moment that card is played.</p>
+        <h3>
+          {byId(state, state.bidder_id)} won the bidding at {state.bidder_bid} and is secretly choosing{" "}
+          {needed === 1 ? "a teammate" : `${needed} teammates`}...
+        </h3>
+        <p className="muted">Each teammate is revealed the moment they play their designated card.</p>
       </div>
     );
   }
 
+  function toggle(c: CardT) {
+    const key = cardKey(c);
+    const isSelected = selected.some((s) => cardKey(s) === key);
+    if (isSelected) {
+      setSelected(selected.filter((s) => cardKey(s) !== key));
+    } else if (selected.length < needed) {
+      setSelected([...selected, c]);
+    }
+  }
+
+  function confirm() {
+    if (selected.length === needed) {
+      selectTeammateCards(selected);
+    }
+  }
+
   return (
     <div className="action-panel">
-      <h3>Pick a card. Whoever holds it becomes your secret teammate.</h3>
-      <p className="muted">They won't be revealed until they play this exact card.</p>
+      <h3>
+        Pick {needed} card{needed === 1 ? "" : "s"}. Whoever holds each one becomes a secret teammate.
+      </h3>
+      <p className="muted">
+        Selected {selected.length} / {needed}. They won't be revealed until each teammate plays their card.
+      </p>
       <div className="card-choice-grid">
-        {fullDeck.map((c) => (
-          <PlayingCard key={`${c.suit}${c.rank}`} card={c} mini onClick={() => selectTeammateCard(c)} />
-        ))}
+        {fullDeck.map((c) => {
+          const key = cardKey(c);
+          const isSelected = selected.some((s) => cardKey(s) === key);
+          const disable = !isSelected && selected.length >= needed;
+          return (
+            <div
+              key={key}
+              style={{
+                border: isSelected ? "3px solid gold" : "3px solid transparent",
+                borderRadius: 8,
+                opacity: disable ? 0.4 : 1,
+                display: "inline-block",
+              }}
+            >
+              <PlayingCard card={c} mini onClick={disable ? undefined : () => toggle(c)} />
+            </div>
+          );
+        })}
       </div>
+      <button
+        className="btn btn-primary"
+        style={{ marginTop: 16, width: "auto" }}
+        disabled={selected.length !== needed}
+        onClick={confirm}
+      >
+        Confirm {selected.length}/{needed} teammate card{needed === 1 ? "" : "s"}
+      </button>
     </div>
   );
 }
