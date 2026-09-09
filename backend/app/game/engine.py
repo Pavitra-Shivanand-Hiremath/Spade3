@@ -76,6 +76,9 @@ class Game:
         self.bid_order: list[str] = []
         self.bids: dict[str, Bid] = {}
         self.current_bid_index: int = 0
+        self.passed_bidders: set[str] = set()
+        self.high_bid: Optional[int] = None
+        self.high_bidder: Optional[str] = None
         self.bidder_id: Optional[str] = None
         self.bidder_bid: Optional[int] = None
 
@@ -137,47 +140,93 @@ class Game:
 
         self.bid_order = [p.id for p in self.players]
         self.current_bid_index = 0
+        self.bids = {}
+        self.passed_bidders = set()
+        self.high_bid = None
+        self.high_bidder = None
         self.phase = GamePhase.BIDDING
 
     # ------------------------------------------------------------------
     # Bidding
     # ------------------------------------------------------------------
+    BID_INCREMENT = 5
+
     def current_bidder_id(self) -> Optional[str]:
         if self.phase != GamePhase.BIDDING:
             return None
         return self.bid_order[self.current_bid_index]
 
-    def place_bid(self, player_id: str, amount: int, is_nil: bool = False) -> None:
+    def place_bid(self, player_id: str, amount: int) -> None:
+        """Raise the bid. Must be a multiple of BID_INCREMENT and strictly
+        higher than the current highest bid (if any)."""
         if self.phase != GamePhase.BIDDING:
             raise EngineError("Not currently in the bidding phase.")
         if self.current_bidder_id() != player_id:
             raise EngineError("It is not your turn to bid.")
-        if player_id in self.bids:
-            raise EngineError("You have already bid.")
+        if player_id in self.passed_bidders:
+            raise EngineError("You have already passed and can no longer bid.")
+
+        if amount % self.BID_INCREMENT != 0:
+            raise EngineError(f"Bid must be a multiple of {self.BID_INCREMENT}.")
+        if amount < self.BID_INCREMENT or amount > self.max_bid:
+            raise EngineError(f"Bid must be between {self.BID_INCREMENT} and {self.max_bid}.")
+        if self.high_bid is not None and amount <= self.high_bid:
+            raise EngineError(f"Bid must be higher than the current highest bid ({self.high_bid}).")
+
+        self.bids[player_id] = Bid(amount=amount, is_nil=False)
+        self.high_bid = amount
+        self.high_bidder = player_id
+        self._advance_bid_turn()
+
+    def pass_bid(self, player_id: str, is_nil: bool = False) -> None:
+        """Pass (drop out of the auction). Declaring Nil is recorded for
+        display but functionally also just passes, since final card points
+        (not tricks) decide the hand regardless of who said Nil."""
+        if self.phase != GamePhase.BIDDING:
+            raise EngineError("Not currently in the bidding phase.")
+        if self.current_bidder_id() != player_id:
+            raise EngineError("It is not your turn to bid.")
+        if player_id in self.passed_bidders:
+            raise EngineError("You have already passed.")
 
         if is_nil:
-            amount = 0
-        else:
-            if amount < 0 or amount > self.max_bid:
-                raise EngineError(f"Bid must be between 0 and {self.max_bid}.")
+            self.bids[player_id] = Bid(amount=0, is_nil=True)
+        self.passed_bidders.add(player_id)
+        self._advance_bid_turn()
 
-        self.bids[player_id] = Bid(amount=amount, is_nil=is_nil)
-        self.current_bid_index += 1
+    def _advance_bid_turn(self) -> None:
+        active = [pid for pid in self.bid_order if pid not in self.passed_bidders]
 
-        if self.current_bid_index >= len(self.bid_order):
+        if self.high_bidder is not None and len(active) <= 1:
+            # Everyone else has passed - auction over, high bidder wins.
             self._resolve_bidding()
+            return
+        if self.high_bidder is None and len(active) == 0:
+            # Everyone passed/nil'd without a single real bid (edge case).
+            self._resolve_bidding()
+            return
+
+        n = len(self.bid_order)
+        idx = self.current_bid_index
+        for _ in range(n):
+            idx = (idx + 1) % n
+            if self.bid_order[idx] not in self.passed_bidders:
+                self.current_bid_index = idx
+                return
+        # Shouldn't be reachable given the checks above, but resolve rather
+        # than leave the game stuck if it ever is.
+        self._resolve_bidding()
 
     def _resolve_bidding(self) -> None:
-        # Highest bid wins; ties broken by earlier position in bid_order.
-        best_player_id = None
-        best_amount = -1
-        for pid in self.bid_order:
-            amount = self.bids[pid].amount
-            if amount > best_amount:
-                best_amount = amount
-                best_player_id = pid
-        self.bidder_id = best_player_id
-        self.bidder_bid = best_amount
+        if self.high_bidder is not None:
+            self.bidder_id = self.high_bidder
+            self.bidder_bid = self.high_bid
+        else:
+            # Nobody ever placed a real bid (everyone passed/nil'd) - fall
+            # back to the first player at the minimum increment so the game
+            # can still proceed rather than getting stuck.
+            self.bidder_id = self.bid_order[0]
+            self.bidder_bid = self.BID_INCREMENT
         self.phase = GamePhase.TEAM_SELECTION
 
     # ------------------------------------------------------------------
@@ -346,6 +395,7 @@ class Game:
                 "tricks_won": self.trick_wins.get(p.id, 0),
                 "points": sum(card_points(c) for c in p.won_cards),
                 "has_bid": p.id in self.bids,
+                "passed": p.id in self.passed_bidders,
             }
             if p.id in self.bids:
                 bid = self.bids[p.id]
@@ -381,6 +431,8 @@ class Game:
             "my_hand": my_hand,
             "legal_cards": legal,
             "current_bidder_id": self.current_bidder_id(),
+            "high_bid": self.high_bid,
+            "high_bidder_id": self.high_bidder,
             "bidder_id": self.bidder_id,
             "bidder_bid": self.bidder_bid,
             "teammates_revealed_count": len(self.revealed_teammate_ids),

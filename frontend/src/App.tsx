@@ -40,7 +40,7 @@ export default function App() {
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const { state, connected, error, startGame, placeBid, selectTeammateCards, playCard } = useGameSocket(
+  const { state, connected, error, startGame, placeBid, passBid, selectTeammateCards, playCard } = useGameSocket(
     session?.gameId ?? null,
     session?.playerId ?? null
   );
@@ -114,6 +114,7 @@ export default function App() {
         error={error}
         startGame={startGame}
         placeBid={placeBid}
+        passBid={passBid}
         selectTeammateCards={selectTeammateCards}
         playCard={playCard}
         onLeave={handleLeave}
@@ -238,12 +239,13 @@ function GameScreen(props: {
   connected: boolean;
   error: string | null;
   startGame: () => void;
-  placeBid: (amount: number, isNil?: boolean) => void;
+  placeBid: (amount: number) => void;
+  passBid: (isNil?: boolean) => void;
   selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
   playCard: (card: CardT) => void;
   onLeave: () => void;
 }) {
-  const { gameId, state, connected, error, startGame, placeBid, selectTeammateCards, playCard, onLeave } = props;
+  const { gameId, state, connected, error, startGame, placeBid, passBid, selectTeammateCards, playCard, onLeave } = props;
 
   if (!state) {
     return (
@@ -293,7 +295,7 @@ function GameScreen(props: {
 
       <Felt state={state} playCard={playCard} />
 
-      {state.phase === "bidding" && <BiddingPanel state={state} placeBid={placeBid} />}
+      {state.phase === "bidding" && <BiddingPanel state={state} placeBid={placeBid} passBid={passBid} />}
       {state.phase === "team_selection" && (
         <TeamSelectionPanel state={state} selectTeammateCards={selectTeammateCards} />
       )}
@@ -488,35 +490,68 @@ function trumpSuitName(s: CardT["suit"] | null): string {
 function BiddingPanel({
   state,
   placeBid,
+  passBid,
 }: {
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
-  placeBid: (amount: number, isNil?: boolean) => void;
+  placeBid: (amount: number) => void;
+  passBid: (isNil?: boolean) => void;
 }) {
-  const [amount, setAmount] = useState(Math.round(state.max_bid / 2));
+  const INCREMENT = 5;
+  const floor = (state.high_bid ?? 0) + INCREMENT;
+  const [amount, setAmount] = useState(floor);
   const myTurn = state.current_bidder_id === state.my_player_id;
-  const already = state.players.find((p) => p.id === state.my_player_id)?.has_bid;
+  const iPassed = state.players.find((p) => p.id === state.my_player_id)?.passed;
+
+  // Keep the input's floor in sync as the high bid rises while it's not my turn.
+  useEffect(() => {
+    setAmount((prev) => Math.max(prev, floor));
+  }, [floor]);
 
   return (
     <div className="action-panel">
       <h3>{myTurn ? "Your bid" : `Waiting for ${byId(state, state.current_bidder_id)} to bid...`}</h3>
-      {myTurn && !already && (
+
+      <p className="muted">
+        {state.high_bid !== null
+          ? `Current high bid: ${state.high_bid} (${byId(state, state.high_bidder_id)})`
+          : "No bids yet"}
+      </p>
+
+      <div className="seat-row" style={{ flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+        {state.players.map((p) => (
+          <span key={p.id} className="muted" style={{ fontSize: 13 }}>
+            {p.name}: {p.passed ? (p.bid?.is_nil ? "Nil" : "Passed") : p.has_bid ? p.bid?.amount : "\u2014"}
+          </span>
+        ))}
+      </div>
+
+      {myTurn && !iPassed && (
         <>
           <div className="field">
-            <label htmlFor="bidamt">Point target (0 &ndash; {state.max_bid})</label>
+            <label htmlFor="bidamt">Raise to (multiples of {INCREMENT}, minimum {floor})</label>
             <input
               id="bidamt"
               type="number"
-              min={0}
+              step={INCREMENT}
+              min={floor}
               max={state.max_bid}
               value={amount}
               onChange={(e) => setAmount(Number(e.target.value))}
             />
           </div>
           <div className="bid-grid">
-            <button className="btn btn-primary" style={{ width: "auto" }} onClick={() => placeBid(amount)}>
+            <button
+              className="btn btn-primary"
+              style={{ width: "auto" }}
+              disabled={amount < floor || amount % INCREMENT !== 0 || amount > state.max_bid}
+              onClick={() => placeBid(amount)}
+            >
               Bid {amount}
             </button>
-            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => placeBid(0, true)}>
+            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => passBid(false)}>
+              Pass
+            </button>
+            <button className="btn btn-secondary" style={{ width: "auto" }} onClick={() => passBid(true)}>
               Nil
             </button>
           </div>

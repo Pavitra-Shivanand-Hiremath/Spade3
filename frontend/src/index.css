@@ -21,6 +21,12 @@ html, body, #root {
   height: 100%;
 }
 
+html {
+  /* Stray fixed-width elements (letter-spaced headings, wide grids) can
+     otherwise force the whole page to scroll sideways on narrow phones. */
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   font-family: var(--font-body);
@@ -28,6 +34,7 @@ body {
   background:
     radial-gradient(circle at 50% -10%, var(--felt-700), var(--felt-900) 60%);
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 button {
@@ -58,6 +65,7 @@ h1, h2, h3 {
   flex-direction: column;
   align-items: center;
   padding: 24px 16px 48px;
+  width: 100%;
 }
 
 /* ---------- Lobby ---------- */
@@ -128,6 +136,9 @@ h1, h2, h3 {
   background: rgba(0, 0, 0, 0.2);
   color: var(--cream);
   font-size: 15px;
+  /* iOS Safari auto-zooms on focus if a text input's font-size is under
+     16px; 15px was fine on desktop but caused an awkward zoom-in on phones. */
+  font-size: max(15px, 16px);
 }
 
 .field input::placeholder {
@@ -145,6 +156,8 @@ h1, h2, h3 {
   font-size: 15px;
   font-weight: 600;
   width: 100%;
+  /* Comfortable tap target on touch devices. */
+  min-height: 44px;
 }
 
 .btn-primary {
@@ -255,6 +268,34 @@ h1, h2, h3 {
 .bid-target {
   font-size: 13px;
   color: rgba(243, 234, 217, 0.6);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------- Teammate cards banner ---------- */
+.teammate-cards-banner {
+  text-align: center;
+  margin: 4px 0 18px;
+  padding: 12px 16px;
+  border: 1px solid rgba(212, 175, 106, 0.25);
+  border-radius: 8px;
+  background: rgba(212, 175, 106, 0.06);
+}
+
+.teammate-cards-label {
+  display: block;
+  font-size: 13px;
+  color: var(--gold-soft);
+  margin-bottom: 10px;
+}
+
+.teammate-cards-row {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .felt {
@@ -268,6 +309,7 @@ h1, h2, h3 {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 18px;
+  width: 100%;
 }
 
 .seat-row {
@@ -349,6 +391,7 @@ h1, h2, h3 {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .status-line {
@@ -356,6 +399,7 @@ h1, h2, h3 {
   font-size: 14px;
   color: var(--gold-soft);
   min-height: 20px;
+  padding: 0 8px;
 }
 
 .hand-row {
@@ -450,6 +494,7 @@ h1, h2, h3 {
   border: 1px solid rgba(212, 175, 106, 0.2);
   border-radius: 8px;
   padding: 20px 24px;
+  width: 100%;
 }
 
 .action-panel h3 {
@@ -494,6 +539,7 @@ h1, h2, h3 {
   gap: 20px;
   justify-content: center;
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .score-box {
@@ -533,19 +579,201 @@ h1, h2, h3 {
   font-size: 13px;
 }
 
+/* =========================================================
+   Mobile: tablets and large phones (<= 640px)
+   ========================================================= */
 @media (max-width: 640px) {
-  .seat-row {
+  .app-shell {
+    padding: 16px 10px 40px;
+  }
+
+  .brand h1 {
+    font-size: 32px;
+  }
+
+  .panel {
+    padding: 20px 18px;
+  }
+
+  .game-code {
+    font-size: 32px;
+    letter-spacing: 0.08em;
+  }
+
+  .table-wrap {
+    max-width: 100%;
+  }
+
+  .table-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .table-header h1 {
+    font-size: 19px;
+  }
+
+  .bid-target {
+    font-size: 12px;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .felt {
+    padding: 14px 10px;
+    min-height: unset;
     gap: 12px;
+    border-width: 6px;
+    border-radius: 12px;
+  }
+
+  .seat-row {
+    gap: 10px;
     flex-wrap: wrap;
   }
-  .felt {
-    padding: 16px;
+
+  .seat-card {
+    min-width: 96px;
+    padding: 7px 9px;
   }
+
+  .seat-name {
+    font-size: 12px;
+  }
+
+  .seat-meta {
+    font-size: 10px;
+    gap: 6px;
+  }
+
+  .trick-area {
+    min-height: 90px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .trick-slot {
+    width: 46px;
+    height: 66px;
+  }
+
   .playing-card {
     width: 50px;
     height: 72px;
   }
+
+  .playing-card .suit-center {
+    font-size: 17px;
+  }
+
+  .playing-card .top,
+  .playing-card .bottom {
+    font-size: 12px;
+  }
+
+  .hand-row {
+    /* Let the hand scroll horizontally instead of shrinking cards into
+       illegibility or overflowing the viewport. */
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    padding: 6px 10px 10px;
+    margin-left: -10px;
+    margin-right: -10px;
+    width: calc(100% + 20px);
+  }
+
   .hand-row .playing-card {
-    margin-left: -22px;
+    scroll-snap-align: start;
+    margin-left: -14px;
+  }
+
+  .hand-row .playing-card:first-child {
+    margin-left: 0;
+  }
+
+  /* Tapping/lifting a card should still be easy to see even mid-scroll. */
+  .hand-row .playing-card:hover:not(.disabled) {
+    transform: none;
+  }
+
+  .action-panel {
+    padding: 16px 14px;
+    margin-top: 16px;
+  }
+
+  .card-choice-grid {
+    grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+    max-height: 45vh;
+  }
+
+  .bid-grid .btn,
+  .bid-grid button {
+    flex: 1 1 auto;
+    min-width: 90px;
+  }
+
+  .teammate-cards-banner {
+    padding: 10px 12px;
+    margin-bottom: 14px;
+  }
+
+  .teammate-cards-label {
+    font-size: 12px;
+  }
+
+  .scoreboard {
+    gap: 12px;
+  }
+
+  .score-box {
+    padding: 8px 16px;
+  }
+
+  .score-box .value {
+    font-size: 24px;
+  }
+}
+
+/* =========================================================
+   Mobile: small phones (<= 400px)
+   ========================================================= */
+@media (max-width: 400px) {
+  .brand h1 {
+    font-size: 27px;
+  }
+
+  .brand .suit {
+    font-size: 30px;
+  }
+
+  .game-code {
+    font-size: 26px;
+    letter-spacing: 0.05em;
+  }
+
+  .playing-card {
+    width: 42px;
+    height: 60px;
+    padding: 3px 4px;
+  }
+
+  .playing-card .suit-center {
+    font-size: 14px;
+  }
+
+  .playing-card .top,
+  .playing-card .bottom {
+    font-size: 10px;
+  }
+
+  .seat-card {
+    min-width: 82px;
+  }
+
+  .card-choice-grid {
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
   }
 }

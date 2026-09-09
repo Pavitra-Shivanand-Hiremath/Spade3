@@ -24,6 +24,7 @@ export interface PlayerView {
   tricks_won: number;
   points: number;
   has_bid: boolean;
+  passed: boolean;
   bid?: BidInfo;
   team?: "bidder" | "opponent";
 }
@@ -44,6 +45,8 @@ export interface GameState {
   my_hand: CardT[];
   legal_cards: CardT[];
   current_bidder_id: string | null;
+  high_bid: number | null;
+  high_bidder_id: string | null;
   bidder_id: string | null;
   bidder_bid: number | null;
   teammates_revealed_count: number;
