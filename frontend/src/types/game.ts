@@ -22,6 +22,7 @@ export interface PlayerView {
   connected: boolean;
   cards_remaining: number;
   tricks_won: number;
+  points: number;
   has_bid: boolean;
   bid?: BidInfo;
   team?: "bidder" | "opponent";
@@ -53,6 +54,7 @@ export interface GameState {
   completed_tricks_count: number;
   current_turn_id: string | null;
   spades_broken: boolean;
+  trump_suit: CardT["suit"] | null;
   winner_team: "bidder" | "opponent" | null;
   team_points: Record<string, number>;
   teammate_cards: CardT[];

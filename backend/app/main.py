@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from .game.cards import Card
+from .game.cards import Card, Suit
 from .game.engine import EngineError, GamePhase, MIN_PLAYERS, MAX_PLAYERS
 from .game_manager import game_manager
 from .websocket_manager import connection_manager
@@ -118,7 +118,8 @@ async def handle_message(game, player_id: str, message: dict) -> None:
 
         elif msg_type == "select_teammate_cards":
             cards = [Card.from_dict(c) for c in message["cards"]]
-            game.select_teammate_cards(player_id, cards)
+            trump_suit = Suit(message["trump_suit"])
+            game.select_teammate_cards(player_id, cards, trump_suit)
 
         elif msg_type == "play_card":
             card = Card.from_dict(message["card"])

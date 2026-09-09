@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createGame, joinGame } from "./services/api";
 import { useGameSocket } from "./hooks/useGameSocket";
 import PlayingCard from "./components/PlayingCard";
@@ -239,7 +239,7 @@ function GameScreen(props: {
   error: string | null;
   startGame: () => void;
   placeBid: (amount: number, isNil?: boolean) => void;
-  selectTeammateCards: (cards: CardT[]) => void;
+  selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
   playCard: (card: CardT) => void;
   onLeave: () => void;
 }) {
@@ -279,6 +279,7 @@ function GameScreen(props: {
       {state.teammate_cards.length > 0 && (
         <div className="teammate-cards-banner">
           <span className="teammate-cards-label">
+            Trump suit: <strong>{trumpSuitName(state.trump_suit)}</strong> &nbsp;&middot;&nbsp;
             {byId(state, state.bidder_id)}'s secret teammate card{state.teammate_cards.length === 1 ? "" : "s"}
             &nbsp;&mdash; watch for {state.teammate_cards.length === 1 ? "it" : "these"} being played:
           </span>
@@ -374,6 +375,24 @@ function Felt({
 
   const trickByPlayer = new Map(state.current_trick.map((tc) => [tc.player_id, tc.card]));
 
+  // Two-step card play: first click lifts/selects a card, a second click on
+  // the same (already-lifted) card plays it. Clicking a different card just
+  // switches the lift to that one instead. Any turn change clears the lift
+  // so a stale selection can't carry over into someone else's turn.
+  const [liftedKey, setLiftedKey] = useState<string | null>(null);
+  useEffect(() => {
+    setLiftedKey(null);
+  }, [state.current_turn_id, state.phase]);
+
+  function handleCardClick(c: CardT, key: string) {
+    if (liftedKey === key) {
+      playCard(c);
+      setLiftedKey(null);
+    } else {
+      setLiftedKey(key);
+    }
+  }
+
   function seatLabel(p: (typeof ordered)[number]) {
     if (!p) return null;
     const isTurn = state.current_turn_id === p.id;
@@ -386,7 +405,7 @@ function Felt({
         </div>
         <div className="seat-meta">
           <span>{p.cards_remaining} cards</span>
-          <span>{p.tricks_won} tricks</span>
+          <span>{p.points} pts</span>
           {p.has_bid && p.bid && <span>Bid {p.bid.is_nil ? "Nil" : p.bid.amount}</span>}
         </div>
         {p.team && <div className={`team-tag ${p.team}`}>{p.team === "bidder" ? "Bidder team" : "Opponents"}</div>}
@@ -412,7 +431,11 @@ function Felt({
       <div>
         <div className="status-line">
           {state.phase === "playing" &&
-            (myTurn ? "Your turn \u2014 play a card" : `Waiting for ${byId(state, state.current_turn_id)}...`)}
+            (myTurn
+              ? liftedKey
+                ? "Tap the lifted card again to play it"
+                : "Your turn \u2014 tap a card to select it"
+              : `Waiting for ${byId(state, state.current_turn_id)}...`)}
         </div>
         {me && (
           <>
@@ -423,13 +446,22 @@ function Felt({
               {state.my_hand.map((c) => {
                 const key = `${c.suit}${c.rank}`;
                 const isLegal = myTurn && state.phase === "playing" && legalKeys.has(key);
+                const isLifted = liftedKey === key;
                 return (
-                  <PlayingCard
+                  <div
                     key={key}
-                    card={c}
-                    disabled={!isLegal}
-                    onClick={isLegal ? () => playCard(c) : undefined}
-                  />
+                    style={{
+                      display: "inline-block",
+                      transform: isLifted ? "translateY(-18px)" : "translateY(0)",
+                      transition: "transform 0.15s ease-out",
+                    }}
+                  >
+                    <PlayingCard
+                      card={c}
+                      disabled={!isLegal}
+                      onClick={isLegal ? () => handleCardClick(c, key) : undefined}
+                    />
+                  </div>
                 );
               })}
             </div>
@@ -446,6 +478,11 @@ function TrickSlot({ card }: { card: CardT | undefined }) {
 
 function byId(state: NonNullable<ReturnType<typeof useGameSocket>["state"]>, id: string | null) {
   return state.players.find((p) => p.id === id)?.name ?? "player";
+}
+
+function trumpSuitName(s: CardT["suit"] | null): string {
+  const names: Record<CardT["suit"], string> = { S: "Spades \u2660", H: "Hearts \u2665", C: "Clubs \u2663", D: "Diamonds \u2666" };
+  return s ? names[s] : "none";
 }
 
 function BiddingPanel({
@@ -498,7 +535,7 @@ function TeamSelectionPanel({
   selectTeammateCards,
 }: {
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
-  selectTeammateCards: (cards: CardT[]) => void;
+  selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
 }) {
   const amBidder = state.am_i_bidder;
   const needed = state.teammates_needed;
@@ -507,13 +544,17 @@ function TeamSelectionPanel({
   const fullDeck: CardT[] = SUITS.flatMap((s) => RANKS.map((r) => ({ suit: s, rank: r })));
 
   const [selected, setSelected] = useState<CardT[]>([]);
+  const [trumpSuit, setTrumpSuit] = useState<CardT["suit"] | null>(null);
+
+  const SUIT_NAMES: Record<CardT["suit"], string> = { S: "Spades", H: "Hearts", C: "Clubs", D: "Diamonds" };
+  const SUIT_SYMBOLS: Record<CardT["suit"], string> = { S: "\u2660", H: "\u2665", C: "\u2663", D: "\u2666" };
 
   if (!amBidder) {
     return (
       <div className="action-panel">
         <h3>
-          {byId(state, state.bidder_id)} won the bidding at {state.bidder_bid} and is secretly choosing{" "}
-          {needed === 1 ? "a teammate" : `${needed} teammates`}...
+          {byId(state, state.bidder_id)} won the bidding at {state.bidder_bid} and is secretly choosing a trump
+          suit and {needed === 1 ? "a teammate" : `${needed} teammates`}...
         </h3>
         <p className="muted">Each teammate is revealed the moment they play their designated card.</p>
       </div>
@@ -531,13 +572,28 @@ function TeamSelectionPanel({
   }
 
   function confirm() {
-    if (selected.length === needed) {
-      selectTeammateCards(selected);
+    if (selected.length === needed && trumpSuit) {
+      selectTeammateCards(selected, trumpSuit);
     }
   }
 
   return (
     <div className="action-panel">
+      <h3>Choose your trump suit.</h3>
+      <p className="muted">Whichever suit you pick beats every other suit in every trick, no matter what's led.</p>
+      <div className="bid-grid" style={{ marginBottom: 20 }}>
+        {(["S", "H", "C", "D"] as CardT["suit"][]).map((s) => (
+          <button
+            key={s}
+            className={trumpSuit === s ? "btn btn-primary" : "btn btn-secondary"}
+            style={{ width: "auto" }}
+            onClick={() => setTrumpSuit(s)}
+          >
+            {SUIT_SYMBOLS[s]} {SUIT_NAMES[s]}
+          </button>
+        ))}
+      </div>
+
       <h3>
         Pick {needed} card{needed === 1 ? "" : "s"}. Whoever holds each one becomes a secret teammate.
       </h3>
@@ -567,10 +623,10 @@ function TeamSelectionPanel({
       <button
         className="btn btn-primary"
         style={{ marginTop: 16, width: "auto" }}
-        disabled={selected.length !== needed}
+        disabled={selected.length !== needed || !trumpSuit}
         onClick={confirm}
       >
-        Confirm {selected.length}/{needed} teammate card{needed === 1 ? "" : "s"}
+        Confirm trump suit &amp; {selected.length}/{needed} teammate card{needed === 1 ? "" : "s"}
       </button>
     </div>
   );

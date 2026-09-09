@@ -83,13 +83,14 @@ class Game:
         self.teammate_cards: list[Card] = []
         self.teammate_ids: set[str] = set()
         self.revealed_teammate_ids: set[str] = set()
+        self.trump_suit: Optional[Suit] = None
 
         # Trick play
         self.current_trick: list[PlayedCard] = []
         self.completed_tricks: list[list[PlayedCard]] = []
         self.trick_leader_index: int = 0
         self.current_turn_index: int = 0
-        self.spades_broken: bool = False
+        self.trump_broken: bool = False
 
         # Result
         self.winner_team: Optional[str] = None  # "bidder" | "opponent"
@@ -182,13 +183,15 @@ class Game:
     # ------------------------------------------------------------------
     # Secret teammate selection (now: pick `teammates_needed` cards)
     # ------------------------------------------------------------------
-    def select_teammate_cards(self, player_id: str, cards: list[Card]) -> None:
+    def select_teammate_cards(self, player_id: str, cards: list[Card], trump_suit: Suit) -> None:
         if self.phase != GamePhase.TEAM_SELECTION:
             raise EngineError("Not currently in the team selection phase.")
         if player_id != self.bidder_id:
-            raise EngineError("Only the bidder selects teammate cards.")
+            raise EngineError("Only the bidder selects teammate cards and the trump suit.")
         if len(cards) != self.teammates_needed:
             raise EngineError(f"You must select exactly {self.teammates_needed} card(s).")
+        if not isinstance(trump_suit, Suit):
+            raise EngineError("Invalid trump suit.")
 
         # No duplicate selections (by suit+rank).
         seen = set()
@@ -201,6 +204,7 @@ class Game:
         self.teammate_cards = list(cards)
         self.teammate_ids = set()
         self.revealed_teammate_ids = set()
+        self.trump_suit = trump_suit
 
         # Trick play begins; bidder leads the first trick.
         bidder_index = self.player_by_id(self.bidder_id).position
@@ -262,8 +266,8 @@ class Game:
         player.hand.remove(actual_card)
         self.current_trick.append(PlayedCard(player_id=player_id, card=actual_card))
 
-        if actual_card.suit == Suit.SPADES:
-            self.spades_broken = True
+        if actual_card.suit == self.trump_suit:
+            self.trump_broken = True
 
         # Reveal a secret teammate the moment their designated card is played.
         # (Bidder is never "revealed" separately - they're always known.)
@@ -292,8 +296,8 @@ class Game:
 
     def _trick_winner(self, trick: list[PlayedCard]) -> PlayedCard:
         led_suit = trick[0].card.suit
-        spades_played = [pc for pc in trick if pc.card.suit == Suit.SPADES]
-        pool = spades_played if spades_played else [pc for pc in trick if pc.card.suit == led_suit]
+        trump_played = [pc for pc in trick if pc.card.suit == self.trump_suit]
+        pool = trump_played if trump_played else [pc for pc in trick if pc.card.suit == led_suit]
         return max(pool, key=lambda pc: rank_value(pc.card.rank))
 
     # ------------------------------------------------------------------
@@ -340,6 +344,7 @@ class Game:
                 "connected": p.connected,
                 "cards_remaining": len(p.hand),
                 "tricks_won": self.trick_wins.get(p.id, 0),
+                "points": sum(card_points(c) for c in p.won_cards),
                 "has_bid": p.id in self.bids,
             }
             if p.id in self.bids:
@@ -385,7 +390,8 @@ class Game:
             "current_trick": current_trick,
             "completed_tricks_count": len(self.completed_tricks),
             "current_turn_id": self.players[self.current_turn_index].id if self.players and self.phase == GamePhase.PLAYING else None,
-            "spades_broken": self.spades_broken,
+            "spades_broken": self.trump_broken,
+            "trump_suit": self.trump_suit.value if self.trump_suit else None,
             "winner_team": self.winner_team,
             "team_points": self.team_points,
             "teammate_cards": [c.to_dict() for c in self.teammate_cards],
