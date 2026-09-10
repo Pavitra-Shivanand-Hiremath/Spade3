@@ -242,13 +242,10 @@ class Game:
         if not isinstance(trump_suit, Suit):
             raise EngineError("Invalid trump suit.")
 
-        # No duplicate selections (by suit+rank).
-        seen = set()
-        for c in cards:
-            key = (c.suit, c.rank)
-            if key in seen:
-                raise EngineError("Each selected card must be different.")
-            seen.add(key)
+        # Duplicate face values ARE allowed on purpose: with 2 decks (6-10
+        # players), the same card (e.g. A of Spades) exists twice, held by
+        # two different players. Selecting it twice lets the bidder target
+        # both copies - whoever plays each is independently revealed.
 
         self.teammate_cards = list(cards)
         self.teammate_ids = set()

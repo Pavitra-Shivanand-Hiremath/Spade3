@@ -249,6 +249,11 @@ h1, h2, h3 {
 .table-wrap {
   width: 100%;
   max-width: 920px;
+  /* Without this, a flex/grid item defaults to min-width:auto and will
+     refuse to shrink below its content's natural width - which was
+     forcing the felt (and the whole page) wider than the viewport on
+     mobile instead of letting the hand-row scroll within its own box. */
+  min-width: 0;
 }
 
 .table-header {
@@ -310,6 +315,14 @@ h1, h2, h3 {
   grid-template-rows: auto 1fr auto;
   gap: 18px;
   width: 100%;
+  min-width: 0;
+}
+
+/* Every direct child is a grid item and needs min-width:0 too, for the
+   same reason as .table-wrap above - otherwise the row holding the hand
+   (or a long wrapped opponent row) can still force the grid track wide. */
+.felt > * {
+  min-width: 0;
 }
 
 .seat-row {
@@ -407,6 +420,7 @@ h1, h2, h3 {
   justify-content: center;
   margin-top: 22px;
   gap: -8px;
+  min-width: 0;
 }
 
 .hand-row .playing-card {

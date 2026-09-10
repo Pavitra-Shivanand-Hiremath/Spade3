@@ -277,6 +277,11 @@ function GameScreen(props: {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {!connected && (
+        <div className="error-banner" style={{ background: "rgba(212, 175, 106, 0.12)", borderColor: "rgba(212, 175, 106, 0.4)", color: "var(--gold-soft)" }}>
+          Reconnecting... your moves won't be lost, just give it a moment.
+        </div>
+      )}
 
       {state.teammate_cards.length > 0 && (
         <div className="teammate-cards-banner">
@@ -576,9 +581,39 @@ function TeamSelectionPanel({
   const needed = state.teammates_needed;
   const SUITS: CardT["suit"][] = ["S", "H", "C", "D"];
   const RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
-  const fullDeck: CardT[] = SUITS.flatMap((s) => RANKS.map((r) => ({ suit: s, rank: r })));
 
-  const [selected, setSelected] = useState<CardT[]>([]);
+  // 4-5 players use 1 deck; 6-10 players use 2 (mirrors cards.py's
+  // decks_needed_for, since the frontend doesn't get that number directly).
+  const numDecks = state.num_players <= 5 ? 1 : 2;
+
+  // How many copies of each face value the bidder personally holds, so we
+  // only hide the copies that are actually theirs - not the whole face
+  // value. E.g. with 2 decks, holding 1 of 2 Aces of Spades still leaves
+  // the other copy selectable.
+  const myHandCounts = new Map<string, number>();
+  state.my_hand.forEach((c) => {
+    const k = cardKey(c);
+    myHandCounts.set(k, (myHandCounts.get(k) ?? 0) + 1);
+  });
+
+  interface DeckSlot {
+    id: string;
+    card: CardT;
+  }
+  const slots: DeckSlot[] = [];
+  SUITS.forEach((s) =>
+    RANKS.forEach((r) => {
+      const card: CardT = { suit: s, rank: r };
+      const key = cardKey(card);
+      const heldByMe = myHandCounts.get(key) ?? 0;
+      const availableCopies = Math.max(0, numDecks - heldByMe);
+      for (let i = 0; i < availableCopies; i++) {
+        slots.push({ id: `${key}-${i}`, card });
+      }
+    })
+  );
+
+  const [selected, setSelected] = useState<DeckSlot[]>([]);
   const [trumpSuit, setTrumpSuit] = useState<CardT["suit"] | null>(null);
 
   const SUIT_NAMES: Record<CardT["suit"], string> = { S: "Spades", H: "Hearts", C: "Clubs", D: "Diamonds" };
@@ -596,19 +631,21 @@ function TeamSelectionPanel({
     );
   }
 
-  function toggle(c: CardT) {
-    const key = cardKey(c);
-    const isSelected = selected.some((s) => cardKey(s) === key);
+  function toggle(slot: DeckSlot) {
+    const isSelected = selected.some((s) => s.id === slot.id);
     if (isSelected) {
-      setSelected(selected.filter((s) => cardKey(s) !== key));
+      setSelected(selected.filter((s) => s.id !== slot.id));
     } else if (selected.length < needed) {
-      setSelected([...selected, c]);
+      setSelected([...selected, slot]);
     }
   }
 
   function confirm() {
     if (selected.length === needed && trumpSuit) {
-      selectTeammateCards(selected, trumpSuit);
+      selectTeammateCards(
+        selected.map((s) => s.card),
+        trumpSuit
+      );
     }
   }
 
@@ -634,15 +671,15 @@ function TeamSelectionPanel({
       </h3>
       <p className="muted">
         Selected {selected.length} / {needed}. They won't be revealed until each teammate plays their card.
+        {numDecks === 2 && " With 2 decks in play, some cards show twice \u2014 pick both to target either holder."}
       </p>
       <div className="card-choice-grid">
-        {fullDeck.map((c) => {
-          const key = cardKey(c);
-          const isSelected = selected.some((s) => cardKey(s) === key);
+        {slots.map((slot) => {
+          const isSelected = selected.some((s) => s.id === slot.id);
           const disable = !isSelected && selected.length >= needed;
           return (
             <div
-              key={key}
+              key={slot.id}
               style={{
                 border: isSelected ? "3px solid gold" : "3px solid transparent",
                 borderRadius: 8,
@@ -650,7 +687,7 @@ function TeamSelectionPanel({
                 display: "inline-block",
               }}
             >
-              <PlayingCard card={c} mini onClick={disable ? undefined : () => toggle(c)} />
+              <PlayingCard card={slot.card} mini onClick={disable ? undefined : () => toggle(slot)} />
             </div>
           );
         })}

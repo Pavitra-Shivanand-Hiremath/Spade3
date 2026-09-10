@@ -107,6 +107,12 @@ async def game_socket(websocket: WebSocket, game_id: str):
 
 async def handle_message(game, player_id: str, message: dict) -> None:
     msg_type = message.get("type")
+
+    if msg_type == "ping":
+        # Heartbeat only, keeps the connection alive through idle-timeout
+        # proxies. No state change, so no need to rebroadcast to everyone.
+        return
+
     try:
         if msg_type == "start_game":
             game.start_game()
