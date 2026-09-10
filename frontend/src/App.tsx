@@ -155,6 +155,35 @@ function Lobby(props: {
     error,
   } = props;
 
+  // Raw text buffer for the "number of players" field, separate from the
+  // clamped numeric state used everywhere else. Mobile keyboards typically
+  // clear a number field before typing a replacement digit, and clamping
+  // on every keystroke was snapping straight back to 4 the instant the
+  // field went empty - so clamping now only happens on blur.
+  const [numPlayersText, setNumPlayersText] = useState(String(numPlayers));
+
+  function clampPlayers(raw: string): number {
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? Math.min(10, Math.max(4, n)) : 4;
+  }
+
+  function handleNumPlayersChange(raw: string) {
+    setNumPlayersText(raw);
+    // Only push a live update to parent state while the text is already a
+    // fully valid, in-range number - never force it back to a fallback
+    // just because the field is momentarily empty or partially typed.
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 4 && n <= 10) {
+      setNumPlayers(n);
+    }
+  }
+
+  function handleNumPlayersBlur() {
+    const clamped = clampPlayers(numPlayersText);
+    setNumPlayersText(String(clamped));
+    setNumPlayers(clamped);
+  }
+
   return (
     <div className="lobby">
       <div className="brand">
@@ -176,13 +205,12 @@ function Lobby(props: {
           <input
             id="numplayers"
             type="number"
+            inputMode="numeric"
             min={4}
             max={10}
-            value={numPlayers}
-            onChange={(e) => {
-              const v = Math.max(4, Math.min(10, Number(e.target.value) || 4));
-              setNumPlayers(v);
-            }}
+            value={numPlayersText}
+            onChange={(e) => handleNumPlayersChange(e.target.value)}
+            onBlur={handleNumPlayersBlur}
           />
           <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
             Secret teammates: {Math.floor(numPlayers / 2) - 1} (plus the bidder)
