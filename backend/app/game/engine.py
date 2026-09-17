@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Optional
 import secrets
 
-from .cards import Card, Suit, card_points, rank_value, build_deck, deal_hands
+from .cards import Card, Suit, card_points, rank_value, build_deck, deal_hands, RANK_ORDER
 
 MIN_PLAYERS = 4
 MAX_PLAYERS = 10
@@ -44,6 +44,7 @@ class Player:
     name: str
     position: int
     connected: bool = False
+    is_bot: bool = False
     hand: list[Card] = field(default_factory=list)
     won_cards: list[Card] = field(default_factory=list)
 
@@ -94,6 +95,12 @@ class Game:
         self.trick_leader_index: int = 0
         self.current_turn_index: int = 0
         self.trump_broken: bool = False
+        # Once the last card of a trick is played, the trick is held
+        # visible (not cleared) and no one may act until finalize_trick()
+        # runs - giving every client a couple seconds to see all the
+        # played cards and who won before it clears for the next trick.
+        self.trick_settling: bool = False
+        self.pending_trick_winner_id: Optional[str] = None
 
         # Result
         self.winner_team: Optional[str] = None  # "bidder" | "opponent"
@@ -105,14 +112,20 @@ class Game:
     # ------------------------------------------------------------------
     # Lobby
     # ------------------------------------------------------------------
-    def add_player(self, name: Optional[str] = None) -> Player:
+    def add_player(self, name: Optional[str] = None, is_bot: bool = False) -> Player:
         if len(self.players) >= self.num_players:
             raise EngineError(f"Game is already full ({self.num_players} players).")
         if self.phase != GamePhase.WAITING_FOR_PLAYERS:
             raise EngineError("Game has already started.")
         position = len(self.players)
         player_id = secrets.token_hex(8)
-        player = Player(id=player_id, name=name or f"Player {position + 1}", position=position)
+        player = Player(
+            id=player_id,
+            name=name or (f"Bot {position + 1}" if is_bot else f"Player {position + 1}"),
+            position=position,
+            is_bot=is_bot,
+            connected=is_bot,  # bots are always "connected" - no socket needed
+        )
         self.players.append(player)
         return player
 
@@ -271,7 +284,7 @@ class Game:
 
     def legal_cards(self, player_id: str) -> list[Card]:
         player = self.player_by_id(player_id)
-        if not player or self.phase != GamePhase.PLAYING:
+        if not player or self.phase != GamePhase.PLAYING or self.trick_settling:
             return []
         if self.players[self.current_turn_index].id != player_id:
             return []
@@ -291,6 +304,8 @@ class Game:
     def play_card(self, player_id: str, card: Card) -> None:
         if self.phase != GamePhase.PLAYING:
             raise EngineError("Not currently in the playing phase.")
+        if self.trick_settling:
+            raise EngineError("Waiting for the trick to finish...")
         player = self.player_by_id(player_id)
         if not player:
             raise EngineError("Unknown player.")
@@ -325,17 +340,34 @@ class Game:
             self.current_turn_index = (self.current_turn_index + 1) % self.num_players
             return
 
-        # Trick complete: determine winner.
+        # Trick complete: determine and score the winner now, but hold the
+        # trick visible (don't clear it or advance the turn yet) so every
+        # client gets a chance to see all the played cards. The API layer
+        # calls finalize_trick() after a short pause to actually move on.
         winner_played = self._trick_winner(self.current_trick)
         winner = self.player_by_id(winner_played.player_id)
         for pc in self.current_trick:
             winner.won_cards.append(pc.card)
         self.trick_wins[winner.id] = self.trick_wins.get(winner.id, 0) + 1
 
+        self.trick_settling = True
+        self.pending_trick_winner_id = winner.id
+
+    def finalize_trick(self) -> None:
+        """Called by the API layer once the display pause has elapsed.
+        Clears the trick, advances the turn to the winner, and checks for
+        game-over. No-op if there's no trick actually pending settlement."""
+        if not self.trick_settling:
+            return
+        winner = self.player_by_id(self.pending_trick_winner_id)
+
         self.completed_tricks.append(self.current_trick)
         self.current_trick = []
         self.trick_leader_index = winner.position
         self.current_turn_index = winner.position
+
+        self.trick_settling = False
+        self.pending_trick_winner_id = None
 
         if all(len(p.hand) == 0 for p in self.players):
             self._finish_game()
@@ -344,7 +376,98 @@ class Game:
         led_suit = trick[0].card.suit
         trump_played = [pc for pc in trick if pc.card.suit == self.trump_suit]
         pool = trump_played if trump_played else [pc for pc in trick if pc.card.suit == led_suit]
-        return max(pool, key=lambda pc: rank_value(pc.card.rank))
+        # Manual scan instead of max(): with 2 decks, two players can play
+        # the literal same card (identical suit+rank). Python's max() would
+        # keep the first one seen on a tie; using >= here means the later
+        # play overtakes an equal-ranked earlier one instead.
+        best = pool[0]
+        for pc in pool[1:]:
+            if rank_value(pc.card.rank) >= rank_value(best.card.rank):
+                best = pc
+        return best
+
+    # ------------------------------------------------------------------
+    # Bot AI - simple heuristics, called by the API layer whenever the
+    # current actor is a bot player.
+    # ------------------------------------------------------------------
+    def bot_bidding_action(self, player_id: str) -> None:
+        player = self.player_by_id(player_id)
+        hand_strength = sum(card_points(c) for c in player.hand)
+        # Conservative cap: never bid above ~65% of the bot's own hand
+        # value, since it doesn't know its (secret) teammate's hand.
+        cap = (int(hand_strength * 0.65) // self.BID_INCREMENT) * self.BID_INCREMENT
+        cap = min(cap, self.max_bid)
+        next_bid = (self.high_bid or 0) + self.BID_INCREMENT
+        if next_bid <= cap:
+            self.place_bid(player_id, next_bid)
+        else:
+            self.pass_bid(player_id, is_nil=False)
+
+    def bot_team_selection(self, player_id: str) -> None:
+        player = self.player_by_id(player_id)
+
+        # Trump suit = whichever suit the bot holds the most cards in.
+        suit_counts = {s: 0 for s in Suit}
+        for c in player.hand:
+            suit_counts[c.suit] += 1
+        trump_suit = max(suit_counts, key=lambda s: suit_counts[s])
+
+        # Teammate card(s): target the highest-value cards not already in
+        # the bot's own hand (mirrors the frontend's copy-count-aware
+        # filtering - with 2 decks, holding 1 of 2 copies still leaves the
+        # other copy targetable).
+        num_decks = 1 if self.num_players <= 5 else 2
+        hand_counts: dict[tuple, int] = {}
+        for c in player.hand:
+            key = (c.suit, c.rank)
+            hand_counts[key] = hand_counts.get(key, 0) + 1
+
+        candidates: list[Card] = []
+        for s in Suit:
+            for r in RANK_ORDER:
+                held = hand_counts.get((s, r), 0)
+                for _ in range(max(0, num_decks - held)):
+                    candidates.append(Card(s, r))
+        candidates.sort(key=lambda c: card_points(c), reverse=True)
+        chosen = candidates[: self.teammates_needed]
+
+        self.select_teammate_cards(player_id, chosen, trump_suit)
+
+    def bot_choose_card(self, player_id: str) -> Card:
+        legal = self.legal_cards(player_id)
+        if not legal:
+            raise EngineError("Bot has no legal card to play.")
+
+        if not self.current_trick:
+            # Leading: play conservatively low to preserve strong cards.
+            return min(legal, key=lambda c: rank_value(c.rank))
+
+        led_suit = self._led_suit()
+        trump_played = [pc for pc in self.current_trick if pc.card.suit == self.trump_suit]
+        pool = trump_played if trump_played else [pc for pc in self.current_trick if pc.card.suit == led_suit]
+        best = pool[0]
+        for pc in pool[1:]:
+            if rank_value(pc.card.rank) >= rank_value(best.card.rank):
+                best = pc
+        best_card = best.card
+
+        def beats(c: Card) -> bool:
+            if c.suit == self.trump_suit and best_card.suit != self.trump_suit:
+                return True
+            if c.suit == self.trump_suit and best_card.suit == self.trump_suit:
+                return rank_value(c.rank) > rank_value(best_card.rank)
+            if c.suit != self.trump_suit and best_card.suit == self.trump_suit:
+                return False
+            if c.suit == best_card.suit:
+                return rank_value(c.rank) > rank_value(best_card.rank)
+            return False
+
+        winners = [c for c in legal if beats(c)]
+        if winners:
+            # Win as cheaply as possible rather than overspending strength.
+            return min(winners, key=lambda c: rank_value(c.rank))
+        # Can't win this trick - dump the lowest legal card.
+        return min(legal, key=lambda c: rank_value(c.rank))
 
     # ------------------------------------------------------------------
     # Scoring
@@ -388,6 +511,7 @@ class Game:
                 "name": p.name,
                 "position": p.position,
                 "connected": p.connected,
+                "is_bot": p.is_bot,
                 "cards_remaining": len(p.hand),
                 "tricks_won": self.trick_wins.get(p.id, 0),
                 "points": sum(card_points(c) for c in p.won_cards),
@@ -438,7 +562,9 @@ class Game:
             "am_i_bidder": requesting_player_id == self.bidder_id,
             "current_trick": current_trick,
             "completed_tricks_count": len(self.completed_tricks),
-            "current_turn_id": self.players[self.current_turn_index].id if self.players and self.phase == GamePhase.PLAYING else None,
+            "current_turn_id": self.players[self.current_turn_index].id if self.players and self.phase == GamePhase.PLAYING and not self.trick_settling else None,
+            "trick_settling": self.trick_settling,
+            "pending_trick_winner_id": self.pending_trick_winner_id,
             "spades_broken": self.trump_broken,
             "trump_suit": self.trump_suit.value if self.trump_suit else None,
             "winner_team": self.winner_team,

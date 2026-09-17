@@ -9,11 +9,16 @@ export interface CreateGameResponse {
   num_players: number;
 }
 
-export async function createGame(maxBid: number, numPlayers: number, name?: string): Promise<CreateGameResponse> {
+export async function createGame(
+  maxBid: number,
+  numPlayers: number,
+  name?: string,
+  vsBots?: boolean
+): Promise<CreateGameResponse> {
   const res = await fetch(`${BASE_URL}/api/games`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ max_bid: maxBid, num_players: numPlayers, name }),
+    body: JSON.stringify({ max_bid: maxBid, num_players: numPlayers, name, vs_bots: !!vsBots }),
   });
   if (!res.ok) throw new Error((await res.json()).detail || "Failed to create game");
   return res.json();

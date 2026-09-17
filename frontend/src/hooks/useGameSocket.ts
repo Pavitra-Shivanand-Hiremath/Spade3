@@ -42,6 +42,7 @@ export function useGameSocket(gameId: string | null, playerId: string | null): U
 
     intentionalCloseRef.current = false;
     reconnectAttemptsRef.current = 0;
+    let currentSocket: WebSocket | null = null;
 
     function clearHeartbeat() {
       if (heartbeatRef.current) {
@@ -58,65 +59,162 @@ export function useGameSocket(gameId: string | null, playerId: string | null): U
     }
 
     function connect() {
-      const ws = new WebSocket(gameSocketUrl(gameId as string, playerId as string));
+      if (intentionalCloseRef.current) return;
+    
+      const ws = new WebSocket(
+        gameSocketUrl(gameId as string, playerId as string)
+      );
+      
+      currentSocket = ws;
       wsRef.current = ws;
-
+    
       ws.onopen = () => {
+        // Ignore this socket if another connection has already replaced it.
+        if (wsRef.current !== ws) {
+          ws.close();
+          return;
+        }
+    
+        console.log("[WS] Connected");
+    
         setConnected(true);
+        setError(null);
         reconnectAttemptsRef.current = 0;
-
+    
         clearHeartbeat();
+    
         heartbeatRef.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "ping" }));
           }
         }, HEARTBEAT_INTERVAL_MS);
       };
-
+    
       ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "game_state") {
-          setState(msg.state);
-          setError(null);
-        } else if (msg.type === "error") {
-          setError(msg.message);
+        // Ignore messages from an old socket.
+        if (wsRef.current !== ws) {
+          return;
         }
-        // "pong" (if the server ever sends one back) needs no handling -
-        // receiving any message at all is proof the connection is alive.
+    
+        try {
+          const msg = JSON.parse(event.data);
+    
+          if (msg.type === "game_state") {
+            console.log("[WS] Game state received");
+    
+            setState(msg.state);
+            setError(null);
+          } else if (msg.type === "error") {
+            console.error("[WS] Server error:", msg.message);
+            setError(msg.message);
+          }
+        } catch (e) {
+          console.error("[WS] Invalid message:", e);
+        }
       };
-
-      ws.onclose = () => {
+    
+      ws.onclose = (event) => {
+        // Don't let an old socket change the state of the current socket.
+        if (wsRef.current !== ws) {
+          return;
+        }
+    
+        console.log(`[WS] Connection closed - code=${event.code} reason="${event.reason}" wasClean=${event.wasClean}`);
+    
         setConnected(false);
         clearHeartbeat();
-
-        if (intentionalCloseRef.current) return;
-
-        // Unexpected drop - reconnect with capped exponential backoff so a
-        // genuinely down server doesn't get hammered with retries.
+    
+        if (intentionalCloseRef.current) {
+          return;
+        }
+    
         const attempt = reconnectAttemptsRef.current;
-        const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+    
+        const delay = Math.min(
+          RECONNECT_BASE_MS * 2 ** attempt,
+          RECONNECT_MAX_MS
+        );
+    
         reconnectAttemptsRef.current += 1;
-
+    
+        console.log(
+          `[WS] Reconnecting in ${delay}ms`
+        );
+    
         clearReconnectTimer();
+    
         reconnectTimeoutRef.current = setTimeout(() => {
-          if (!intentionalCloseRef.current) connect();
+          if (!intentionalCloseRef.current) {
+            connect();
+          }
         }, delay);
       };
-
-      ws.onerror = () => {
-        // onclose fires right after onerror for WebSockets, so the actual
-        // reconnect scheduling happens there - this just avoids an
-        // unhandled-error console spam on some browsers.
+    
+      ws.onerror = (event) => {
+        console.error("[WS] WebSocket error", event);
       };
     }
 
     connect();
 
+    // Mobile browsers frequently suspend/kill a WebSocket when a tab is
+    // backgrounded (screen locked, app-switched) WITHOUT ever firing
+    // onclose - the socket just silently dies. It only becomes apparent
+    // once the tab is foregrounded again. Force a reconnect check at that
+    // moment instead of waiting for a send to fail first.
+    function handleVisibleOrOnline() {
+      if (document.visibilityState !== "visible") return;
+      const ws = wsRef.current;
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        console.log("[WS] Tab foregrounded / back online - reconnecting now");
+        reconnectAttemptsRef.current = 0;
+        clearReconnectTimer();
+        connect();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibleOrOnline);
+    window.addEventListener("online", handleVisibleOrOnline);
+
+    // The precise browser hook for this: Chrome (and others) proactively
+    // closes any open WebSocket the moment a tab becomes eligible for the
+    // back-forward cache (bfcache) - e.g. when it's backgrounded by
+    // switching tabs. `pageshow` with `event.persisted === true` fires
+    // specifically when the page is being restored FROM that frozen
+    // state, and is faster/more reliable for this exact case than waiting
+    // on the generic visibilitychange fallback above.
+    function handlePageShow(event: PageTransitionEvent) {
+      if (event.persisted) {
+        console.log("[WS] Restored from back-forward cache - reconnecting now");
+        reconnectAttemptsRef.current = 0;
+        clearReconnectTimer();
+        connect();
+      }
+    }
+    window.addEventListener("pageshow", handlePageShow);
+
     return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+      document.removeEventListener("visibilitychange", handleVisibleOrOnline);
+      window.removeEventListener("online", handleVisibleOrOnline);
+
       intentionalCloseRef.current = true;
+    
       clearHeartbeat();
       clearReconnectTimer();
-      wsRef.current?.close();
+    
+      // Only close the socket created by this effect.
+      if (currentSocket) {
+        if (
+          currentSocket.readyState === WebSocket.OPEN ||
+          currentSocket.readyState === WebSocket.CONNECTING
+        ) {
+          currentSocket.close(1000, "Component cleanup");
+        }
+    
+        if (wsRef.current === currentSocket) {
+          wsRef.current = null;
+        }
+      }
     };
   }, [gameId, playerId]);
 

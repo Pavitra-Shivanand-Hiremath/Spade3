@@ -20,6 +20,7 @@ export interface PlayerView {
   name: string;
   position: number;
   connected: boolean;
+  is_bot: boolean;
   cards_remaining: number;
   tricks_won: number;
   points: number;
@@ -56,6 +57,8 @@ export interface GameState {
   current_trick: TrickCard[];
   completed_tricks_count: number;
   current_turn_id: string | null;
+  trick_settling: boolean;
+  pending_trick_winner_id: string | null;
   spades_broken: boolean;
   trump_suit: CardT["suit"] | null;
   winner_team: "bidder" | "opponent" | null;

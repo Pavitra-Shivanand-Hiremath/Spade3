@@ -37,6 +37,7 @@ export default function App() {
   const [joinCode, setJoinCode] = useState("");
   const [maxBid, setMaxBid] = useState(150);
   const [numPlayers, setNumPlayers] = useState(4);
+  const [mode, setMode] = useState<"friends" | "bots">("friends");
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -49,7 +50,7 @@ export default function App() {
     setBusy(true);
     setFormError(null);
     try {
-      const res = await createGame(maxBid, numPlayers, name || undefined);
+      const res = await createGame(maxBid, numPlayers, name || undefined, mode === "bots");
       const s = { gameId: res.game_id, playerId: res.player_id, playerNumber: res.player_number };
       saveSession(s);
       setSession(s);
@@ -96,6 +97,8 @@ export default function App() {
           setMaxBid={setMaxBid}
           numPlayers={numPlayers}
           setNumPlayers={setNumPlayers}
+          mode={mode}
+          setMode={setMode}
           onCreate={handleCreate}
           onJoin={handleJoin}
           busy={busy}
@@ -135,6 +138,8 @@ function Lobby(props: {
   setMaxBid: (v: number) => void;
   numPlayers: number;
   setNumPlayers: (v: number) => void;
+  mode: "friends" | "bots";
+  setMode: (v: "friends" | "bots") => void;
   onCreate: () => void;
   onJoin: () => void;
   busy: boolean;
@@ -149,6 +154,8 @@ function Lobby(props: {
     setMaxBid,
     numPlayers,
     setNumPlayers,
+    mode,
+    setMode,
     onCreate,
     onJoin,
     busy,
@@ -194,8 +201,34 @@ function Lobby(props: {
 
       {error && <div className="error-banner">{error}</div>}
 
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <h2>How do you want to play?</h2>
+        <div className="bid-grid">
+          <button
+            className={mode === "friends" ? "btn btn-primary" : "btn btn-secondary"}
+            style={{ width: "auto" }}
+            onClick={() => setMode("friends")}
+          >
+            Play with friends
+          </button>
+          <button
+            className={mode === "bots" ? "btn btn-primary" : "btn btn-secondary"}
+            style={{ width: "auto" }}
+            onClick={() => setMode("bots")}
+          >
+            &#129302; Play with bots
+          </button>
+        </div>
+        {mode === "bots" && (
+          <p className="muted" style={{ marginTop: 8 }}>
+            Every other seat is filled by a bot and the game starts immediately - no need to wait for anyone
+            else to join.
+          </p>
+        )}
+      </div>
+
       <div className="panel">
-        <h2>Start a new table</h2>
+        <h2>{mode === "bots" ? "Start a game with bots" : "Start a new table"}</h2>
         <div className="field">
           <label htmlFor="name1">Your name</label>
           <input id="name1" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
@@ -214,6 +247,7 @@ function Lobby(props: {
           />
           <p className="muted" style={{ marginTop: 4, fontSize: 13 }}>
             Secret teammates: {Math.floor(numPlayers / 2) - 1} (plus the bidder)
+            {mode === "bots" && ` \u00b7 ${numPlayers - 1} bot(s) will fill the rest`}
           </p>
         </div>
         <div className="field">
@@ -228,32 +262,36 @@ function Lobby(props: {
           />
         </div>
         <button className="btn btn-primary" onClick={onCreate} disabled={busy}>
-          Create game
+          {mode === "bots" ? "Start playing" : "Create game"}
         </button>
       </div>
 
-      <div className="divider-text">need {numPlayers - 1} more players to join</div>
+      {mode === "friends" && (
+        <>
+          <div className="divider-text">need {numPlayers - 1} more players to join</div>
 
-      <div className="panel">
-        <h2>Join an existing table</h2>
-        <div className="field">
-          <label htmlFor="name2">Your name</label>
-          <input id="name2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
-        </div>
-        <div className="field">
-          <label htmlFor="code">Game code</label>
-          <input
-            id="code"
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            placeholder="ABC123"
-            maxLength={6}
-          />
-        </div>
-        <button className="btn btn-secondary" onClick={onJoin} disabled={busy}>
-          Join game
-        </button>
-      </div>
+          <div className="panel">
+            <h2>Join an existing table</h2>
+            <div className="field">
+              <label htmlFor="name2">Your name</label>
+              <input id="name2" value={name} onChange={(e) => setName(e.target.value)} placeholder="Player" />
+            </div>
+            <div className="field">
+              <label htmlFor="code">Game code</label>
+              <input
+                id="code"
+                value={joinCode}
+                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="ABC123"
+                maxLength={6}
+              />
+            </div>
+            <button className="btn btn-secondary" onClick={onJoin} disabled={busy}>
+              Join game
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -319,8 +357,8 @@ function GameScreen(props: {
             &nbsp;&mdash; watch for {state.teammate_cards.length === 1 ? "it" : "these"} being played:
           </span>
           <div className="teammate-cards-row">
-            {state.teammate_cards.map((c) => (
-              <PlayingCard key={`${c.suit}${c.rank}`} card={c} mini />
+            {withInstanceKeys(state.teammate_cards).map(({ instanceKey, card: c }) => (
+              <PlayingCard key={instanceKey} card={c} mini />
             ))}
           </div>
         </div>
@@ -436,6 +474,7 @@ function Felt({
       <div className={`seat-card ${isTurn ? "active-turn" : ""} ${isMe ? "me" : ""}`} key={p.id}>
         <div className="seat-name">
           {p.name}
+          {p.is_bot && <span title="Bot">&#129302;</span>}
           {p.id === state.bidder_id && <span title="Bidder">&#9819;</span>}
         </div>
         <div className="seat-meta">
@@ -448,43 +487,48 @@ function Felt({
     );
   }
 
+  function playedStack(p: (typeof ordered)[number]) {
+    if (!p) return null;
+    return (
+      <div key={p.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+        <TrickSlot card={trickByPlayer.get(p.id)} />
+        {seatLabel(p)}
+      </div>
+    );
+  }
+
   return (
     <div className="felt">
-      {/* Opponent panels wrap across as many rows as needed for any table size */}
-      <div className="seat-row" style={{ flexWrap: "wrap", justifyContent: "center", gap: 12 }}>
-        {opponents.map((p) => seatLabel(p))}
-      </div>
-
-      <div className="trick-area">
-        <div className="seat-row" style={{ gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
-          {ordered.map((p) => (
-            <TrickSlot key={p.id} card={trickByPlayer.get(p.id)} />
-          ))}
-        </div>
+      {/* Each opponent's played card sits directly above their own seat
+          panel, instead of two separate rows (names above, cards below). */}
+      <div className="seat-row" style={{ flexWrap: "wrap", justifyContent: "center", gap: 16 }}>
+        {opponents.map((p) => playedStack(p))}
       </div>
 
       <div>
         <div className="status-line">
-          {state.phase === "playing" &&
-            (myTurn
-              ? liftedKey
-                ? "Tap the lifted card again to play it"
-                : "Your turn \u2014 tap a card to select it"
-              : `Waiting for ${byId(state, state.current_turn_id)}...`)}
+          {state.trick_settling
+            ? `${byId(state, state.pending_trick_winner_id)} won that trick!`
+            : state.phase === "playing" &&
+              (myTurn
+                ? liftedKey
+                  ? "Tap the lifted card again to play it"
+                  : "Your turn \u2014 tap a card to select it"
+                : `Waiting for ${byId(state, state.current_turn_id)}...`)}
         </div>
         {me && (
           <>
             <div className="seat-row" style={{ marginTop: 8, marginBottom: 8, justifyContent: "center" }}>
-              {seatLabel(me)}
+              {playedStack(me)}
             </div>
             <div className="hand-row">
-              {state.my_hand.map((c) => {
-                const key = `${c.suit}${c.rank}`;
-                const isLegal = myTurn && state.phase === "playing" && legalKeys.has(key);
-                const isLifted = liftedKey === key;
+              {withInstanceKeys(state.my_hand).map(({ instanceKey, card: c }) => {
+                const faceKey = `${c.suit}${c.rank}`;
+                const isLegal = myTurn && state.phase === "playing" && legalKeys.has(faceKey);
+                const isLifted = liftedKey === instanceKey;
                 return (
                   <div
-                    key={key}
+                    key={instanceKey}
                     style={{
                       display: "inline-block",
                       transform: isLifted ? "translateY(-18px)" : "translateY(0)",
@@ -494,7 +538,7 @@ function Felt({
                     <PlayingCard
                       card={c}
                       disabled={!isLegal}
-                      onClick={isLegal ? () => handleCardClick(c, key) : undefined}
+                      onClick={isLegal ? () => handleCardClick(c, instanceKey) : undefined}
                     />
                   </div>
                 );
@@ -505,6 +549,16 @@ function Felt({
       </div>
     </div>
   );
+}
+
+function withInstanceKeys(cards: CardT[]): { instanceKey: string; card: CardT }[] {
+  const counts = new Map<string, number>();
+  return cards.map((c) => {
+    const base = `${c.suit}${c.rank}`;
+    const idx = counts.get(base) ?? 0;
+    counts.set(base, idx + 1);
+    return { instanceKey: `${base}-${idx}`, card: c };
+  });
 }
 
 function TrickSlot({ card }: { card: CardT | undefined }) {
