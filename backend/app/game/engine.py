@@ -84,9 +84,20 @@ class Game:
         self.bidder_bid: Optional[int] = None
 
         # Secret teammates (now potentially more than one)
-        self.teammate_cards: list[Card] = []
+        self.teammate_cards: list[tuple[Card, int]] = []
         self.teammate_ids: set[str] = set()
         self.revealed_teammate_ids: set[str] = set()
+        # Per-face-value reveal counter: e.g. if the bidder picked A-of-
+        # Hearts once and K-of-Hearts once, each can only ever reveal ONE
+        # player - a second physical copy of either (possible with 2
+        # decks) played by someone else does nothing. Picking the SAME
+        # face value twice on purpose still lets both physical copies
+        # each reveal a (different) player, since that value then has 2
+        # slots instead of 1.
+        # Counts every play of each face value (by anyone, including the
+        # bidder) so a pick like "2nd Ace of Hearts" can be checked
+        # against exactly when that physical copy gets played.
+        self._card_play_occurrence: dict[tuple, int] = {}
         self.trump_suit: Optional[Suit] = None
 
         # Trick play
@@ -263,6 +274,7 @@ class Game:
         self.teammate_cards = list(cards)
         self.teammate_ids = set()
         self.revealed_teammate_ids = set()
+        self._teammate_reveal_counts = {}
         self.trump_suit = trump_suit
 
         # Trick play begins; bidder leads the first trick.
@@ -271,8 +283,11 @@ class Game:
         self.current_turn_index = bidder_index
         self.phase = GamePhase.PLAYING
 
-    def _is_teammate_card(self, card: Card) -> bool:
-        return any(tc.suit == card.suit and tc.rank == card.rank for tc in self.teammate_cards)
+    def _teammate_slots_for(self, card: Card) -> int:
+        """How many teammate 'slots' were assigned to this exact face
+        value (normally 1 - or more if the bidder deliberately picked the
+        same card twice to target both physical copies in a 2-deck game)."""
+        return sum(1 for tc in self.teammate_cards if tc.suit == card.suit and tc.rank == card.rank)
 
     # ------------------------------------------------------------------
     # Trick play
@@ -330,11 +345,20 @@ class Game:
         if actual_card.suit == self.trump_suit:
             self.trump_broken = True
 
-        # Reveal a secret teammate the moment their designated card is played.
+        # Reveal a secret teammate the moment their designated card is
+        # played - but only if that specific face value still has an
+        # unclaimed slot. Without this cap, 2 decks could let every player
+        # holding a duplicate of a picked card become a teammate, instead
+        # of just one holder per card the bidder actually selected.
         # (Bidder is never "revealed" separately - they're always known.)
-        if player_id != self.bidder_id and self._is_teammate_card(actual_card) and player_id not in self.revealed_teammate_ids:
-            self.teammate_ids.add(player_id)
-            self.revealed_teammate_ids.add(player_id)
+        if player_id != self.bidder_id and player_id not in self.revealed_teammate_ids:
+            card_key = (actual_card.suit, actual_card.rank)
+            slots = self._teammate_slots_for(actual_card)
+            already_claimed = self._teammate_reveal_counts.get(card_key, 0)
+            if slots > already_claimed:
+                self.teammate_ids.add(player_id)
+                self.revealed_teammate_ids.add(player_id)
+                self._teammate_reveal_counts[card_key] = already_claimed + 1
 
         if len(self.current_trick) < self.num_players:
             self.current_turn_index = (self.current_turn_index + 1) % self.num_players
