@@ -63,5 +63,10 @@ export interface GameState {
   trump_suit: CardT["suit"] | null;
   winner_team: "bidder" | "opponent" | null;
   team_points: Record<string, number>;
-  teammate_cards: CardT[];
+  teammate_cards: (CardT & { occurrence: number })[];
+}
+
+export interface TeammatePick {
+  card: CardT;
+  occurrence: number;
 }

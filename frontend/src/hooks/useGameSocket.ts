@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { GameState, CardT } from "../types/game";
+import { GameState, CardT, TeammatePick } from "../types/game";
 import { gameSocketUrl } from "../services/api";
 
 interface UseGameSocketResult {
@@ -9,7 +9,7 @@ interface UseGameSocketResult {
   startGame: () => void;
   placeBid: (amount: number) => void;
   passBid: (isNil?: boolean) => void;
-  selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
+  selectTeammateCards: (picks: TeammatePick[], trumpSuit: CardT["suit"]) => void;
   playCard: (card: CardT) => void;
 }
 
@@ -231,8 +231,8 @@ export function useGameSocket(gameId: string | null, playerId: string | null): U
   const passBid = useCallback((isNil = false) => send({ type: "pass_bid", is_nil: isNil }), [send]);
 
   const selectTeammateCards = useCallback(
-    (cards: CardT[], trumpSuit: CardT["suit"]) =>
-      send({ type: "select_teammate_cards", cards, trump_suit: trumpSuit }),
+    (picks: TeammatePick[], trumpSuit: CardT["suit"]) =>
+      send({ type: "select_teammate_cards", picks, trump_suit: trumpSuit }),
     [send]
   );
 

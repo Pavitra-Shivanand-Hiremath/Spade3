@@ -83,21 +83,19 @@ class Game:
         self.bidder_id: Optional[str] = None
         self.bidder_bid: Optional[int] = None
 
-        # Secret teammates (now potentially more than one)
-        self.teammate_cards: list[tuple[Card, int]] = []
+        # Secret teammates (now potentially more than one). Each slot is
+        # {"card": Card, "occurrence": int, "claimed": bool} - occurrence
+        # is which physical play of that face value (1st, 2nd, ...) across
+        # the WHOLE game should trigger the reveal, since the bidder may
+        # want a specific one (e.g. "whoever plays the 2nd Queen of
+        # Hearts") rather than just "whoever plays it first".
+        self.teammate_slots: list[dict] = []
+        # Counts every play of each face value (by anyone, including the
+        # bidder) so a slot targeting "2nd Ace of Hearts" can be checked
+        # against exactly when that physical copy gets played.
+        self.card_play_counts: dict[tuple, int] = {}
         self.teammate_ids: set[str] = set()
         self.revealed_teammate_ids: set[str] = set()
-        # Per-face-value reveal counter: e.g. if the bidder picked A-of-
-        # Hearts once and K-of-Hearts once, each can only ever reveal ONE
-        # player - a second physical copy of either (possible with 2
-        # decks) played by someone else does nothing. Picking the SAME
-        # face value twice on purpose still lets both physical copies
-        # each reveal a (different) player, since that value then has 2
-        # slots instead of 1.
-        # Counts every play of each face value (by anyone, including the
-        # bidder) so a pick like "2nd Ace of Hearts" can be checked
-        # against exactly when that physical copy gets played.
-        self._card_play_occurrence: dict[tuple, int] = {}
         self.trump_suit: Optional[Suit] = None
 
         # Trick play
@@ -256,25 +254,36 @@ class Game:
     # ------------------------------------------------------------------
     # Secret teammate selection (now: pick `teammates_needed` cards)
     # ------------------------------------------------------------------
-    def select_teammate_cards(self, player_id: str, cards: list[Card], trump_suit: Suit) -> None:
+    def select_teammate_cards(self, player_id: str, picks: list[tuple[Card, int]], trump_suit: Suit) -> None:
+        """picks: list of (card, occurrence) where occurrence (1-based)
+        is WHICH physical play of that face value across the whole game
+        should trigger the reveal - e.g. (QueenOfHearts, 2) means
+        "whoever plays the 2nd Queen of Hearts, whenever that happens"."""
         if self.phase != GamePhase.TEAM_SELECTION:
             raise EngineError("Not currently in the team selection phase.")
         if player_id != self.bidder_id:
             raise EngineError("Only the bidder selects teammate cards and the trump suit.")
-        if len(cards) != self.teammates_needed:
+        if len(picks) != self.teammates_needed:
             raise EngineError(f"You must select exactly {self.teammates_needed} card(s).")
         if not isinstance(trump_suit, Suit):
             raise EngineError("Invalid trump suit.")
 
-        # Duplicate face values ARE allowed on purpose: with 2 decks (6-10
-        # players), the same card (e.g. A of Spades) exists twice, held by
-        # two different players. Selecting it twice lets the bidder target
-        # both copies - whoever plays each is independently revealed.
+        num_decks = 1 if self.num_players <= 5 else 2
+        seen = set()
+        for card, occurrence in picks:
+            if not (1 <= occurrence <= num_decks):
+                raise EngineError(f"Occurrence must be between 1 and {num_decks}.")
+            key = (card.suit, card.rank, occurrence)
+            if key in seen:
+                raise EngineError("Each (card, occurrence) pick must be different.")
+            seen.add(key)
 
-        self.teammate_cards = list(cards)
+        self.teammate_slots = [
+            {"card": card, "occurrence": occurrence, "claimed": False} for card, occurrence in picks
+        ]
+        self.card_play_counts = {}
         self.teammate_ids = set()
         self.revealed_teammate_ids = set()
-        self._teammate_reveal_counts = {}
         self.trump_suit = trump_suit
 
         # Trick play begins; bidder leads the first trick.
@@ -282,12 +291,6 @@ class Game:
         self.trick_leader_index = bidder_index
         self.current_turn_index = bidder_index
         self.phase = GamePhase.PLAYING
-
-    def _teammate_slots_for(self, card: Card) -> int:
-        """How many teammate 'slots' were assigned to this exact face
-        value (normally 1 - or more if the bidder deliberately picked the
-        same card twice to target both physical copies in a 2-deck game)."""
-        return sum(1 for tc in self.teammate_cards if tc.suit == card.suit and tc.rank == card.rank)
 
     # ------------------------------------------------------------------
     # Trick play
@@ -345,20 +348,27 @@ class Game:
         if actual_card.suit == self.trump_suit:
             self.trump_broken = True
 
-        # Reveal a secret teammate the moment their designated card is
-        # played - but only if that specific face value still has an
-        # unclaimed slot. Without this cap, 2 decks could let every player
-        # holding a duplicate of a picked card become a teammate, instead
-        # of just one holder per card the bidder actually selected.
-        # (Bidder is never "revealed" separately - they're always known.)
-        if player_id != self.bidder_id and player_id not in self.revealed_teammate_ids:
+        # Track the running occurrence count for this exact face value,
+        # counting ONLY plays by players other than the bidder - the
+        # bidder's own copy (if they hold one) never counts, since it
+        # could never be revealed as a teammate anyway. This is what
+        # makes "the 2nd copy played" unambiguous even when the bidder
+        # holds one of two physical copies themselves.
+        if player_id != self.bidder_id:
             card_key = (actual_card.suit, actual_card.rank)
-            slots = self._teammate_slots_for(actual_card)
-            already_claimed = self._teammate_reveal_counts.get(card_key, 0)
-            if slots > already_claimed:
-                self.teammate_ids.add(player_id)
-                self.revealed_teammate_ids.add(player_id)
-                self._teammate_reveal_counts[card_key] = already_claimed + 1
+            occurrence_now = self.card_play_counts.get(card_key, 0) + 1
+            self.card_play_counts[card_key] = occurrence_now
+
+            if player_id not in self.revealed_teammate_ids:
+                for slot in self.teammate_slots:
+                    if slot["claimed"]:
+                        continue
+                    slot_card = slot["card"]
+                    if slot_card.suit == actual_card.suit and slot_card.rank == actual_card.rank and slot["occurrence"] == occurrence_now:
+                        slot["claimed"] = True
+                        self.teammate_ids.add(player_id)
+                        self.revealed_teammate_ids.add(player_id)
+                        break
 
         if len(self.current_trick) < self.num_players:
             self.current_turn_index = (self.current_turn_index + 1) % self.num_players
@@ -455,7 +465,13 @@ class Game:
         candidates.sort(key=lambda c: card_points(c), reverse=True)
         chosen = candidates[: self.teammates_needed]
 
-        self.select_teammate_cards(player_id, chosen, trump_suit)
+        occurrence_counters: dict[tuple, int] = {}
+        picks: list[tuple[Card, int]] = []
+        for card in chosen:
+            key = (card.suit, card.rank)
+            occurrence_counters[key] = occurrence_counters.get(key, 0) + 1
+            picks.append((card, occurrence_counters[key]))
+        self.select_teammate_cards(player_id, picks, trump_suit)
 
     def bot_choose_card(self, player_id: str) -> Card:
         legal = self.legal_cards(player_id)
@@ -593,6 +609,8 @@ class Game:
             "trump_suit": self.trump_suit.value if self.trump_suit else None,
             "winner_team": self.winner_team,
             "team_points": self.team_points,
-            "teammate_cards": [c.to_dict() for c in self.teammate_cards],
+            "teammate_cards": [
+                {**slot["card"].to_dict(), "occurrence": slot["occurrence"]} for slot in self.teammate_slots
+            ],
         }
         return state

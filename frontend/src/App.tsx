@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { createGame, joinGame } from "./services/api";
 import { useGameSocket } from "./hooks/useGameSocket";
 import PlayingCard from "./components/PlayingCard";
-import { CardT } from "./types/game";
+import { CardT, TeammatePick } from "./types/game";
 
 // sessionStorage (NOT localStorage) is deliberate: it is scoped per browser
 // tab, so tabs in the same window each keep their own identity.
@@ -307,7 +307,7 @@ function GameScreen(props: {
   startGame: () => void;
   placeBid: (amount: number) => void;
   passBid: (isNil?: boolean) => void;
-  selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
+  selectTeammateCards: (picks: TeammatePick[], trumpSuit: CardT["suit"]) => void;
   playCard: (card: CardT) => void;
   onLeave: () => void;
 }) {
@@ -358,7 +358,12 @@ function GameScreen(props: {
           </span>
           <div className="teammate-cards-row">
             {withInstanceKeys(state.teammate_cards).map(({ instanceKey, card: c }) => (
-              <PlayingCard key={instanceKey} card={c} mini />
+              <div key={instanceKey} style={{ textAlign: "center" }}>
+                <PlayingCard card={c} mini />
+                <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                  {ordinalLabel(c.occurrence)} played
+                </div>
+              </div>
             ))}
           </div>
         </div>
@@ -551,7 +556,7 @@ function Felt({
   );
 }
 
-function withInstanceKeys(cards: CardT[]): { instanceKey: string; card: CardT }[] {
+function withInstanceKeys<T extends CardT>(cards: T[]): { instanceKey: string; card: T }[] {
   const counts = new Map<string, number>();
   return cards.map((c) => {
     const base = `${c.suit}${c.rank}`;
@@ -559,6 +564,13 @@ function withInstanceKeys(cards: CardT[]): { instanceKey: string; card: CardT }[
     counts.set(base, idx + 1);
     return { instanceKey: `${base}-${idx}`, card: c };
   });
+}
+
+function ordinalLabel(n: number): string {
+  if (n === 1) return "1st";
+  if (n === 2) return "2nd";
+  if (n === 3) return "3rd";
+  return `${n}th`;
 }
 
 function TrickSlot({ card }: { card: CardT | undefined }) {
@@ -657,7 +669,7 @@ function TeamSelectionPanel({
   selectTeammateCards,
 }: {
   state: NonNullable<ReturnType<typeof useGameSocket>["state"]>;
-  selectTeammateCards: (cards: CardT[], trumpSuit: CardT["suit"]) => void;
+  selectTeammateCards: (picks: TeammatePick[], trumpSuit: CardT["suit"]) => void;
 }) {
   const amBidder = state.am_i_bidder;
   const needed = state.teammates_needed;
@@ -669,33 +681,20 @@ function TeamSelectionPanel({
   const numDecks = state.num_players <= 5 ? 1 : 2;
 
   // How many copies of each face value the bidder personally holds, so we
-  // only hide the copies that are actually theirs - not the whole face
-  // value. E.g. with 2 decks, holding 1 of 2 Aces of Spades still leaves
-  // the other copy selectable.
+  // only hide fully-held values - holding 1 of 2 copies still leaves the
+  // other one targetable.
   const myHandCounts = new Map<string, number>();
   state.my_hand.forEach((c) => {
     const k = cardKey(c);
     myHandCounts.set(k, (myHandCounts.get(k) ?? 0) + 1);
   });
 
-  interface DeckSlot {
+  interface Pick {
     id: string;
     card: CardT;
+    occurrence: number;
   }
-  const slots: DeckSlot[] = [];
-  SUITS.forEach((s) =>
-    RANKS.forEach((r) => {
-      const card: CardT = { suit: s, rank: r };
-      const key = cardKey(card);
-      const heldByMe = myHandCounts.get(key) ?? 0;
-      const availableCopies = Math.max(0, numDecks - heldByMe);
-      for (let i = 0; i < availableCopies; i++) {
-        slots.push({ id: `${key}-${i}`, card });
-      }
-    })
-  );
-
-  const [selected, setSelected] = useState<DeckSlot[]>([]);
+  const [selected, setSelected] = useState<Pick[]>([]);
   const [trumpSuit, setTrumpSuit] = useState<CardT["suit"] | null>(null);
 
   const SUIT_NAMES: Record<CardT["suit"], string> = { S: "Spades", H: "Hearts", C: "Clubs", D: "Diamonds" };
@@ -713,23 +712,53 @@ function TeamSelectionPanel({
     );
   }
 
-  function toggle(slot: DeckSlot) {
-    const isSelected = selected.some((s) => s.id === slot.id);
-    if (isSelected) {
-      setSelected(selected.filter((s) => s.id !== slot.id));
-    } else if (selected.length < needed) {
-      setSelected([...selected, slot]);
+  function availableCopies(card: CardT): number {
+    const heldByMe = myHandCounts.get(cardKey(card)) ?? 0;
+    return Math.max(0, numDecks - heldByMe);
+  }
+
+  function pickCount(card: CardT): number {
+    const key = cardKey(card);
+    return selected.filter((p) => cardKey(p.card) === key).length;
+  }
+
+  function addPick(card: CardT) {
+    if (selected.length >= needed) return;
+    const already = pickCount(card);
+    const maxCopies = availableCopies(card);
+    if (already >= maxCopies) return;
+    // With only 1 external copy available (bidder holds the other one),
+    // there's no ambiguity - it's the only non-bidder play of this value,
+    // so it's always occurrence 1. A real 1st/2nd choice only exists when
+    // 2 full external copies are available (bidder holds neither).
+    let defaultOccurrence = 1;
+    if (maxCopies === 2) {
+      const usedOccurrences = selected.filter((p) => cardKey(p.card) === cardKey(card)).map((p) => p.occurrence);
+      defaultOccurrence = [1, 2].find((o) => !usedOccurrences.includes(o)) ?? 1;
     }
+    setSelected([...selected, { id: `${cardKey(card)}-${Date.now()}-${Math.random()}`, card, occurrence: defaultOccurrence }]);
+  }
+
+  function removePick(id: string) {
+    setSelected(selected.filter((p) => p.id !== id));
+  }
+
+  function setOccurrence(id: string, occurrence: number) {
+    setSelected(selected.map((p) => (p.id === id ? { ...p, occurrence } : p)));
   }
 
   function confirm() {
     if (selected.length === needed && trumpSuit) {
       selectTeammateCards(
-        selected.map((s) => s.card),
+        selected.map((p) => ({ card: p.card, occurrence: p.occurrence })),
         trumpSuit
       );
     }
   }
+
+  const faceValues: CardT[] = SUITS.flatMap((s) => RANKS.map((r) => ({ suit: s, rank: r }))).filter(
+    (c) => availableCopies(c) > 0
+  );
 
   return (
     <div className="action-panel">
@@ -753,27 +782,94 @@ function TeamSelectionPanel({
       </h3>
       <p className="muted">
         Selected {selected.length} / {needed}. They won't be revealed until each teammate plays their card.
-        {numDecks === 2 && " With 2 decks in play, some cards show twice \u2014 pick both to target either holder."}
+        {numDecks === 2 &&
+          " With 2 decks in play, tap a card again to also target its other copy \u2014 and for each pick, you can choose whether it's whoever plays the 1st or 2nd copy of that card."}
       </p>
       <div className="card-choice-grid">
-        {slots.map((slot) => {
-          const isSelected = selected.some((s) => s.id === slot.id);
-          const disable = !isSelected && selected.length >= needed;
+        {faceValues.map((c) => {
+          const count = pickCount(c);
+          const maxCopies = availableCopies(c);
+          const disable = count >= maxCopies || selected.length >= needed;
           return (
             <div
-              key={slot.id}
+              key={cardKey(c)}
               style={{
-                border: isSelected ? "3px solid gold" : "3px solid transparent",
+                border: count > 0 ? "3px solid gold" : "3px solid transparent",
                 borderRadius: 8,
-                opacity: disable ? 0.4 : 1,
+                opacity: disable && count === 0 ? 0.4 : 1,
                 display: "inline-block",
+                position: "relative",
               }}
             >
-              <PlayingCard card={slot.card} mini onClick={disable ? undefined : () => toggle(slot)} />
+              <PlayingCard card={c} mini onClick={disable ? undefined : () => addPick(c)} />
+              {count > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: -6,
+                    right: -6,
+                    background: "gold",
+                    color: "#1a1a1a",
+                    borderRadius: "50%",
+                    width: 18,
+                    height: 18,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {count}
+                </span>
+              )}
             </div>
           );
         })}
       </div>
+
+      {selected.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <p className="muted" style={{ marginBottom: 8 }}>
+            Your picks{numDecks === 2 ? " \u2014 tap 1st/2nd to choose which copy triggers the reveal:" : ":"}
+          </p>
+          <div className="seat-row" style={{ flexWrap: "wrap", gap: 10, justifyContent: "flex-start" }}>
+            {selected.map((p) => (
+              <div key={p.id} style={{ textAlign: "center" }}>
+                <PlayingCard card={p.card} mini />
+                {availableCopies(p.card) === 2 ? (
+                  <div className="bid-grid" style={{ marginTop: 4, marginBottom: 4, gap: 4 }}>
+                    {[1, 2].map((o) => (
+                      <button
+                        key={o}
+                        className={p.occurrence === o ? "btn btn-primary" : "btn btn-secondary"}
+                        style={{ width: "auto", padding: "2px 8px", fontSize: 11, minHeight: "auto" }}
+                        onClick={() => setOccurrence(p.id, o)}
+                      >
+                        {ordinalLabel(o)}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  numDecks === 2 && (
+                    <div className="muted" style={{ fontSize: 11, marginTop: 4, marginBottom: 4 }}>
+                      only copy available
+                    </div>
+                  )
+                )}
+                <button
+                  className="btn btn-secondary"
+                  style={{ width: "auto", padding: "2px 8px", fontSize: 11, minHeight: "auto" }}
+                  onClick={() => removePick(p.id)}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <button
         className="btn btn-primary"
         style={{ marginTop: 16, width: "auto" }}

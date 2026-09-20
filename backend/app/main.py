@@ -200,9 +200,9 @@ async def handle_message(game, player_id: str, message: dict) -> None:
             game.pass_bid(player_id, is_nil=is_nil)
 
         elif msg_type == "select_teammate_cards":
-            cards = [Card.from_dict(c) for c in message["cards"]]
+            picks = [(Card.from_dict(p["card"]), int(p["occurrence"])) for p in message["picks"]]
             trump_suit = Suit(message["trump_suit"])
-            game.select_teammate_cards(player_id, cards, trump_suit)
+            game.select_teammate_cards(player_id, picks, trump_suit)
 
         elif msg_type == "play_card":
             card = Card.from_dict(message["card"])
